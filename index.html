@@ -184,8 +184,6 @@ canvas{display:block;touch-action:none}
     <button class="skbtn" id="sb3" ontouchstart="touchSk('분신술',event)" style="border-color:#b060ff"><span class="skt" style="color:#b060ff">분신술</span><span class="skmp">MP 50</span><div class="skcd-bar"><div class="skcd-fill" id="sc3" style="background:#b060ff;width:100%"></div></div></button>
   </div>
 </div>
-<script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-database-compat.js"></script>
 <script>
 function resetGameState(){
   // 플레이어 초기화
@@ -1548,12 +1546,33 @@ const FIREBASE_CONFIG = {
   appId: "1:549482134271:web:9b82e1feafe32a9d132aca",
   measurementId: "G-VWCE4JZDGS"
 };
-let RANK_DB=null;
-try{
-  firebase.initializeApp(FIREBASE_CONFIG);
-  RANK_DB=firebase.database();
-}catch(err){
-  console.warn('Firebase init failed:',err);
+// REST 방식으로 랭킹 저장/불러오기
+// Firebase SDK 연결이 오래 걸리면 버튼이 "등록중..."에서 멈출 수 있어서,
+// GitHub Pages에서는 REST API + 타임아웃 방식이 더 안정적이다.
+const RANK_DB_URL = (FIREBASE_CONFIG.databaseURL || '').replace(/\/$/, '');
+let RANK_DB_READY = !!RANK_DB_URL;
+function dbRequest(method,url,data,timeoutMs){
+  timeoutMs = timeoutMs || 8000;
+  return new Promise(function(resolve,reject){
+    const xhr = new XMLHttpRequest();
+    xhr.open(method,url,true);
+    xhr.timeout = timeoutMs;
+    xhr.setRequestHeader('Content-Type','application/json');
+    xhr.onreadystatechange = function(){
+      if(xhr.readyState===4){
+        if(xhr.status>=200 && xhr.status<300){
+          let parsed=null;
+          try{parsed=xhr.responseText?JSON.parse(xhr.responseText):null;}catch(e){parsed=xhr.responseText;}
+          resolve({status:xhr.status,data:parsed,text:xhr.responseText});
+        }else{
+          reject(new Error('HTTP '+xhr.status+' '+(xhr.responseText||'')));
+        }
+      }
+    };
+    xhr.ontimeout = function(){reject(new Error('TIMEOUT'));};
+    xhr.onerror = function(){reject(new Error('NETWORK_ERROR'));};
+    xhr.send(data===undefined?null:JSON.stringify(data));
+  });
 }
 
 function calcScore(){
@@ -1578,7 +1597,8 @@ function renderGameOver(status){
     +'<div style="color:#ccc;margin:5px 0">Wave '+WAVE+' | Lv.'+P.lv+'</div>'
     +'<div style="color:#ccc;margin:5px 0">처치 '+P.kills+' | 골드 '+P.gold+'</div>'
     +'<div style="background:#1a1830;border:1px solid #333;border-radius:8px;padding:10px;margin:12px 0;text-align:left">'
-    +'<div style="color:#4af0b0;font-weight:bold;font-size:13px;margin-bottom:6px;text-align:center">온라인 랭킹 등록</div>'
+    +'<div style="color:#4af0b0;font-weight:bold;font-size:13px;margin-bottom:2px;text-align:center">온라인 랭킹 등록</div>'
+    +'<div style="color:#666;font-size:10px;margin-bottom:6px;text-align:center">rank-xhr-fix-v2</div>'
     +'<div style="display:flex;gap:6px">'
     +'<input id="rankName" maxlength="12" placeholder="닉네임 12자" style="flex:1;background:#0a0814;border:1px solid #444;border-radius:6px;color:#fff;padding:8px;font-family:inherit">'
     +'<button class="ob" id="rankSubmitBtn" style="width:auto;margin:0;border-color:#ffc828;color:#ffc828;padding:8px 14px" onclick="submitRanking()">등록</button>'
@@ -1602,7 +1622,7 @@ function setRankStatus(msg,col){
 }
 async function submitRanking(){
   if(RANK_SUBMITTED){setRankStatus('이미 등록했어. 재시작 후 새 기록을 등록할 수 있어.','#ffc828');return;}
-  if(!RANK_DB){setRankStatus('Firebase 연결 실패. Database 설정을 확인해야 해.','#f04040');return;}
+  if(!RANK_DB_READY){setRankStatus('Firebase 주소가 없어. databaseURL을 확인해야 해.','#f04040');return;}
   const inp=document.getElementById('rankName');
   const name=cleanRankName(inp?inp.value:'');
   if(inp)inp.value=name;
@@ -1618,27 +1638,32 @@ async function submitRanking(){
   };
   const btn=document.getElementById('rankSubmitBtn');
   if(btn){btn.disabled=true;btn.textContent='등록중...';}
+  setRankStatus('서버에 기록을 보내는 중...','#aaa');
   try{
-    await RANK_DB.ref('rankings').push(data);
+    await dbRequest('POST',RANK_DB_URL+'/rankings.json',data,8000);
     RANK_SUBMITTED=true;
     setRankStatus('등록 완료! TOP 10을 새로 불러왔어.','#4af0b0');
     if(btn){btn.textContent='완료';btn.style.color='#4af0b0';btn.style.borderColor='#4af0b0';}
     loadLeaderboard();
   }catch(err){
     console.error(err);
-    setRankStatus('등록 실패: Realtime Database Rules 또는 주소를 확인해줘.','#f04040');
+    const reason=(err&&err.message)?err.message:String(err||'UNKNOWN');
+    const msg=reason==='TIMEOUT'
+      ?'등록 실패: Firebase 응답 시간 초과. DB 주소/Rules/인터넷을 확인해줘.'
+      :'등록 실패: '+reason;
+    setRankStatus(msg,'#f04040');
     if(btn){btn.disabled=false;btn.textContent='등록';}
   }
 }
 async function loadLeaderboard(){
   const box=document.getElementById('rankList');
   if(!box)return;
-  if(!RANK_DB){box.innerHTML='<span style="color:#f04040">Firebase 연결 실패</span>';return;}
+  if(!RANK_DB_READY){box.innerHTML='<span style="color:#f04040">Firebase 주소 없음</span>';return;}
   box.textContent='불러오는 중...';
   try{
-    const snap=await RANK_DB.ref('rankings').orderByChild('score').limitToLast(10).once('value');
-    const arr=[];
-    snap.forEach(function(ch){arr.push(ch.val());});
+    const response=await dbRequest('GET',RANK_DB_URL+'/rankings.json?orderBy=%22score%22&limitToLast=10',undefined,8000);
+    const obj=response.data;
+    const arr=obj?Object.keys(obj).map(function(k){return obj[k];}):[];
     arr.sort(function(a,b){return (b.score||0)-(a.score||0) || (a.createdAt||0)-(b.createdAt||0);});
     if(arr.length===0){box.innerHTML='<div style="color:#666;text-align:center;padding:6px">아직 기록 없음</div>';return;}
     let h='<div style="display:grid;grid-template-columns:34px 1fr 82px 60px;gap:4px;color:#888;border-bottom:1px solid #333;padding-bottom:4px;margin-bottom:4px">'
@@ -1655,7 +1680,8 @@ async function loadLeaderboard(){
     box.innerHTML=h;
   }catch(err){
     console.error(err);
-    box.innerHTML='<span style="color:#f04040">랭킹 불러오기 실패</span>';
+    const reason=(err&&err.message)?err.message:String(err||'UNKNOWN');
+    box.innerHTML='<span style="color:#f04040">랭킹 불러오기 실패: '+escHtml(reason)+'</span>';
   }
 }
 function showGO(){
