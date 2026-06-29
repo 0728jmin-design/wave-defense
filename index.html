@@ -184,6 +184,8 @@ canvas{display:block;touch-action:none}
     <button class="skbtn" id="sb3" ontouchstart="touchSk('분신술',event)" style="border-color:#b060ff"><span class="skt" style="color:#b060ff">분신술</span><span class="skmp">MP 50</span><div class="skcd-bar"><div class="skcd-fill" id="sc3" style="background:#b060ff;width:100%"></div></div></button>
   </div>
 </div>
+<script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-database-compat.js"></script>
 <script>
 function resetGameState(){
   // 플레이어 초기화
@@ -198,7 +200,7 @@ function resetGameState(){
   // 웨이브 초기화
   WAVE=0;BETWEEN=true;BTTIMER=180;QUEUE=[];SPAWNT=0;SHOPOPEN=false;
   ENEMIES=[];BOSS=null;DROPS=[];BULS=[];EXPS=[];PX=[];
-  GAMEOVER=false;OV_OPEN=false;
+  GAMEOVER=false;OV_OPEN=false;RANK_SUBMITTED=false;LAST_SCORE=0;
   document.getElementById('ov').classList.add('h');
   genShop();
 }
@@ -1530,13 +1532,136 @@ function renderStat(){
 function addSp(attr,val){if(P.sp<=0)return;P[attr]+=val;P.sp--;P.recalc();P.hp=Math.min(P.maxHp,P.hp);if(P.sp===0)closeOv();else renderStat();updateHUD();}
 function closeOv(){OV_OPEN=false;document.getElementById('ov').classList.add('h');}
 
-// ── 게임오버 ───────────────────────────────────────────
+// ── 온라인 랭킹 / 게임오버 ─────────────────────────────
 let GAMEOVER=false;
 let GAME_STARTED=false;
+let RANK_SUBMITTED=false;
+let LAST_SCORE=0;
+
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyATIMLb-IJ9b6EQ5wc4cePejIQr6g88zhk",
+  authDomain: "wave-defense-3c789.firebaseapp.com",
+  databaseURL: "https://wave-defense-3c789-default-rtdb.firebaseio.com/",
+  projectId: "wave-defense-3c789",
+  storageBucket: "wave-defense-3c789.firebasestorage.app",
+  messagingSenderId: "549482134271",
+  appId: "1:549482134271:web:9b82e1feafe32a9d132aca",
+  measurementId: "G-VWCE4JZDGS"
+};
+let RANK_DB=null;
+try{
+  firebase.initializeApp(FIREBASE_CONFIG);
+  RANK_DB=firebase.database();
+}catch(err){
+  console.warn('Firebase init failed:',err);
+}
+
+function calcScore(){
+  return Math.max(0,Math.floor(WAVE*1000+P.kills*20+P.lv*500+P.gold));
+}
+function escHtml(s){
+  return String(s).replace(/[&<>'"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c];});
+}
+function cleanRankName(raw){
+  let s=String(raw||'').trim();
+  s=s.replace(/[<>]/g,'').replace(/\s+/g,' ');
+  if(!s)s='player';
+  return s.slice(0,12);
+}
+function renderGameOver(status){
+  const ovc=document.getElementById('ovc');
+  const score=LAST_SCORE||calcScore();
+  ovc.innerHTML=''
+    +'<div style="text-align:center">'
+    +'<div style="font-size:38px;color:#f04040;font-weight:bold;margin-bottom:10px">GAME OVER</div>'
+    +'<div style="color:#ffc828;font-size:22px;font-weight:bold;margin:6px 0">점수 '+score.toLocaleString()+'</div>'
+    +'<div style="color:#ccc;margin:5px 0">Wave '+WAVE+' | Lv.'+P.lv+'</div>'
+    +'<div style="color:#ccc;margin:5px 0">처치 '+P.kills+' | 골드 '+P.gold+'</div>'
+    +'<div style="background:#1a1830;border:1px solid #333;border-radius:8px;padding:10px;margin:12px 0;text-align:left">'
+    +'<div style="color:#4af0b0;font-weight:bold;font-size:13px;margin-bottom:6px;text-align:center">온라인 랭킹 등록</div>'
+    +'<div style="display:flex;gap:6px">'
+    +'<input id="rankName" maxlength="12" placeholder="닉네임 12자" style="flex:1;background:#0a0814;border:1px solid #444;border-radius:6px;color:#fff;padding:8px;font-family:inherit">'
+    +'<button class="ob" id="rankSubmitBtn" style="width:auto;margin:0;border-color:#ffc828;color:#ffc828;padding:8px 14px" onclick="submitRanking()">등록</button>'
+    +'</div>'
+    +'<div id="rankStatus" style="font-size:11px;color:#aaa;margin-top:6px;text-align:center">'+escHtml(status||'닉네임을 입력하고 랭킹에 등록해봐.')+'</div>'
+    +'</div>'
+    +'<div style="background:#12101e;border:1px solid #333;border-radius:8px;padding:10px;margin-top:8px;text-align:left">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'
+    +'<span style="color:#ffc828;font-weight:bold">🏆 TOP 10 랭킹</span>'
+    +'<button onclick="loadLeaderboard()" style="background:#1a1830;border:1px solid #444;border-radius:5px;color:#aaa;font-size:11px;padding:3px 8px;cursor:pointer;font-family:inherit">새로고침</button>'
+    +'</div>'
+    +'<div id="rankList" style="font-size:12px;color:#aaa;text-align:center;padding:8px">불러오는 중...</div>'
+    +'</div>'
+    +'<button class="ob" style="margin-top:14px;border-color:#4af0b0;color:#4af0b0;width:auto;padding:8px 28px" onclick="restartGame()">재시작</button>'
+    +'</div>';
+  setTimeout(loadLeaderboard,50);
+}
+function setRankStatus(msg,col){
+  const el=document.getElementById('rankStatus');
+  if(el){el.textContent=msg;el.style.color=col||'#aaa';}
+}
+async function submitRanking(){
+  if(RANK_SUBMITTED){setRankStatus('이미 등록했어. 재시작 후 새 기록을 등록할 수 있어.','#ffc828');return;}
+  if(!RANK_DB){setRankStatus('Firebase 연결 실패. Database 설정을 확인해야 해.','#f04040');return;}
+  const inp=document.getElementById('rankName');
+  const name=cleanRankName(inp?inp.value:'');
+  if(inp)inp.value=name;
+  const score=LAST_SCORE||calcScore();
+  const data={
+    name:name,
+    score:score,
+    wave:WAVE,
+    level:P.lv,
+    kills:P.kills,
+    gold:P.gold,
+    createdAt:Date.now()
+  };
+  const btn=document.getElementById('rankSubmitBtn');
+  if(btn){btn.disabled=true;btn.textContent='등록중...';}
+  try{
+    await RANK_DB.ref('rankings').push(data);
+    RANK_SUBMITTED=true;
+    setRankStatus('등록 완료! TOP 10을 새로 불러왔어.','#4af0b0');
+    if(btn){btn.textContent='완료';btn.style.color='#4af0b0';btn.style.borderColor='#4af0b0';}
+    loadLeaderboard();
+  }catch(err){
+    console.error(err);
+    setRankStatus('등록 실패: Realtime Database Rules 또는 주소를 확인해줘.','#f04040');
+    if(btn){btn.disabled=false;btn.textContent='등록';}
+  }
+}
+async function loadLeaderboard(){
+  const box=document.getElementById('rankList');
+  if(!box)return;
+  if(!RANK_DB){box.innerHTML='<span style="color:#f04040">Firebase 연결 실패</span>';return;}
+  box.textContent='불러오는 중...';
+  try{
+    const snap=await RANK_DB.ref('rankings').orderByChild('score').limitToLast(10).once('value');
+    const arr=[];
+    snap.forEach(function(ch){arr.push(ch.val());});
+    arr.sort(function(a,b){return (b.score||0)-(a.score||0) || (a.createdAt||0)-(b.createdAt||0);});
+    if(arr.length===0){box.innerHTML='<div style="color:#666;text-align:center;padding:6px">아직 기록 없음</div>';return;}
+    let h='<div style="display:grid;grid-template-columns:34px 1fr 82px 60px;gap:4px;color:#888;border-bottom:1px solid #333;padding-bottom:4px;margin-bottom:4px">'
+      +'<span>순위</span><span>닉네임</span><span>점수</span><span>Wave</span></div>';
+    arr.forEach(function(r,i){
+      const medal=i===0?'🥇':i===1?'🥈':i===2?'🥉':(i+1)+'위';
+      h+='<div style="display:grid;grid-template-columns:34px 1fr 82px 60px;gap:4px;align-items:center;padding:3px 0;border-bottom:1px solid #222">'
+        +'<span style="color:#ffc828">'+medal+'</span>'
+        +'<span style="color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(r.name||'player')+'</span>'
+        +'<span style="color:#4af0b0;text-align:right">'+Number(r.score||0).toLocaleString()+'</span>'
+        +'<span style="color:#aaa;text-align:right">'+Number(r.wave||0)+'</span>'
+        +'</div>';
+    });
+    box.innerHTML=h;
+  }catch(err){
+    console.error(err);
+    box.innerHTML='<span style="color:#f04040">랭킹 불러오기 실패</span>';
+  }
+}
 function showGO(){
-  GAMEOVER=true;OV_OPEN=true;
+  GAMEOVER=true;OV_OPEN=true;LAST_SCORE=calcScore();
   document.getElementById('ov').classList.remove('h');
-  document.getElementById('ovc').innerHTML='<div style="text-align:center"><div style="font-size:38px;color:#f04040;font-weight:bold;margin-bottom:10px">GAME OVER</div><div style="color:#ccc;margin:5px 0">Wave '+WAVE+'</div><div style="color:#ccc;margin:5px 0">처치 '+P.kills+' | 골드 '+P.gold+' | Lv.'+P.lv+'</div><button class="ob" style="margin-top:14px;border-color:#4af0b0;color:#4af0b0;width:auto;padding:8px 28px" onclick="restartGame()">재시작</button></div>';
+  renderGameOver('닉네임을 입력하고 랭킹에 등록해봐.');
 }
 
 // ── 입력 ───────────────────────────────────────────────
