@@ -1145,42 +1145,94 @@ function closeShop(){SHOPOPEN=false;OV_OPEN=false;SELL_SEL.clear();document.getE
 let CRAFT_SEL=[];
 function craftPreview(a,b){
   if(a.slot!==b.slot)return null;
-  // 반드시 +10 초월 두 개여야만 고대 생성
-  const aIs10=a.rarity==='초월'&&(a.enhLv||0)>=10;
-  const bIs10=b.rarity==='초월'&&(b.enhLv||0)>=10;
-  if(a.rarity==='초월'||b.rarity==='초월'){
-    if(!(aIs10&&bIs10)) return null;
+
+  const rankOrder=['일반','희귀','전설','합성','신성','초월','고대'];
+  const rankScore=function(r){return Math.max(0,rankOrder.indexOf(r));};
+  const sameRarity=function(r){return a.rarity===r&&b.rarity===r;};
+  const hasRarity=function(r){return a.rarity===r||b.rarity===r;};
+  const maxRarity=function(){return rankScore(a.rarity)>=rankScore(b.rarity)?a.rarity:b.rarity;};
+
+  // 합성 조건표 + 표 밖 조합 규칙
+  // 기본 표:
+  // 일반+일반 → 희귀
+  // 일반+희귀 → 희귀
+  // 희귀+희귀 → 전설
+  // 전설+전설 → 합성(표시: 신화)
+  // 합성+합성 → 신성
+  // +5강 이상 전설 둘 → 신성
+  // +10 초월 둘 → 고대
+  // 추가 규칙:
+  // 다른 등급끼리는 기본적으로 더 높은 등급 유지 + 능력치 합산
+  // 신성+신성 → 초월
+  // 고대가 포함되면 결과는 고대
+  const aIsTrans10=a.rarity==='초월'&&(a.enhLv||0)>=10;
+  const bIsTrans10=b.rarity==='초월'&&(b.enhLv||0)>=10;
+  const bothLegendPlus5=a.rarity==='전설'&&b.rarity==='전설'&&(a.enhLv||0)>=5&&(b.enhLv||0)>=5;
+
+  let newR=null;
+
+  // 최우선 특수 진화
+  if(aIsTrans10&&bIsTrans10){
+    newR='고대';
+  } else if(hasRarity('고대')){
+    newR='고대';
+  } else if(bothLegendPlus5){
+    newR='신성';
+  } else if(sameRarity('신성')){
+    newR='초월';
+  } else if(sameRarity('합성')){
+    newR='신성';
+  } else if(sameRarity('전설')){
+    newR='합성';
+  } else if(sameRarity('희귀')){
+    newR='전설';
+  } else if(sameRarity('일반')){
+    newR='희귀';
+  } else if((a.rarity==='일반'&&b.rarity==='희귀')||(a.rarity==='희귀'&&b.rarity==='일반')){
+    newR='희귀';
+  } else {
+    // 표에 없던 조합: 더 높은 등급 유지
+    // 예) 희귀+전설 → 전설, 전설+합성 → 신화, 합성+신성 → 신성, 초월+신성 → 초월
+    newR=maxRarity();
   }
-  const order={'일반':0,'희귀':1,'전설':2,'합성':3,'신성':4,'초월':5,'고대':6};
-  const ra=order[a.rarity]||0,rb=order[b.rarity]||0;
-  const top=Math.max(ra,rb);
-  // +10 초월끼리만 고대, 강화된(enhLv>=5) 아이템 합성 시 신성
-  const bothEnhanced=(a.enhLv||0)>=5&&(b.enhLv||0)>=5;
-  const bothTranscend=aIs10&&bIs10;
-  const baseNewR=bothTranscend?'고대':['일반','희귀','전설','합성','신성'][Math.min(4,top+(ra+rb>=4?1:0))];
-  const newR=bothTranscend?'고대':bothEnhanced&&top>=2?'신성':baseNewR;
+
   const merged={slot:a.slot,rarity:newR,isCrafted:true};
   for(const key of ['atk','def','hp','mp','spd','atkspd','crit']){
     const v=(a[key]||0)+(b[key]||0);
-    if(v>0)merged[key]=Math.ceil(v*(newR==='고대'?1.5:1.1));
+    if(v>0){
+      let mult=1.1;
+      if(newR==='신성')mult=1.2;
+      if(newR==='초월')mult=1.35;
+      if(newR==='고대')mult=1.5;
+      merged[key]=Math.ceil(v*mult);
+    }
   }
   if(a.rage||b.rage) merged.rage=true;
-  const slotEmoji={weapon:'⚔',armor:'🛡',boots:'👟',ring:'💍'}[a.slot]||'';
-  const rl={'일반':'','희귀':'강화된 ','전설':'전설의 ','합성':'신화 ','신성':'신성한 ','고대':'고대의 '}[newR]||'';
-  const bn={weapon:'무기',armor:'갑옷',boots:'부츠',ring:'반지'}[a.slot];
-  // 재료 이름 기반 합성 이름
-  const nameA=(a.baseName||a.name||'').replace(/ \+\d+$| \[.*?\]$/g,'').replace(/^[⚔🛡👟💍] /,'').trim();
-  const nameB=(b.baseName||b.name||'').replace(/ \+\d+$| \[.*?\]$/g,'').replace(/^[⚔🛡👟💍] /,'').trim();
-  const sA=nameA.length>4?nameA.slice(0,4):nameA;
-  const sB=nameB.length>4?nameB.slice(0,4):nameB;
-  merged.name=slotEmoji+' '+rl+(sA&&sB?sA+'·'+sB:bn);
+
+  // 합성으로 만들어진 결과는 강화 수치를 초기화한다.
+  // 단, +10 초월 둘을 합쳐 나온 고대는 완성 장비로 처리한다.
+  merged.enhLv=0;
+
+  // 실제 등급은 '합성'으로 유지하고, 화면 이름은 '신화'로 표시
+  const rarityLabel={
+    '일반':'일반',
+    '희귀':'희귀',
+    '전설':'전설',
+    '합성':'신화',
+    '신성':'신성',
+    '초월':'초월',
+    '고대':'고대'
+  }[newR]||'합성';
+  const slotLabel={weapon:'무기',armor:'갑옷',boots:'부츠',ring:'반지'}[a.slot]||'아이템';
+  merged.name=rarityLabel+slotLabel;
   merged.baseName=merged.name;
   return merged;
 }
 function craftCost(a,b){
-  const order2={'일반':0,'희귀':1,'전설':2,'합성':3,'신성':4};
-  const top=Math.max(order2[a.rarity]||0,order2[b.rarity]||0);
-  return[100,250,500,900,1500,3000,3000][Math.min(6,top)];
+  const res=craftPreview(a,b);
+  if(!res)return 0;
+  const costByRarity={'희귀':100,'전설':250,'합성':500,'신성':900,'초월':1200,'고대':1800};
+  return costByRarity[res.rarity]||300;
 }
 function allInvList(){
   const list=[];
@@ -1379,7 +1431,7 @@ function openCraft(){CRAFT_SEL=[];OV_OPEN=true;document.getElementById('ov').cla
 function renderCraft(){
   const list=allInvList();
   let h='<div class="pt">⚗ 합성</div>';
-  h+='<div style="font-size:11px;color:#aaa;text-align:center;margin-bottom:8px">같은 슬롯 2개 선택 → 스탯 합산 +10%</div>';
+  h+='<div style="font-size:11px;color:#aaa;text-align:center;margin-bottom:8px">같은 슬롯 2개 선택 → 표 밖 조합은 높은 등급 유지 / 신성+신성=초월 / +10초월 둘=고대</div>';
   h+='<div style="display:flex;gap:8px;margin-bottom:8px">';
   for(let i=0;i<2;i++){
     const sel=CRAFT_SEL[i]!==undefined?list[CRAFT_SEL[i]]:null;
@@ -1403,7 +1455,7 @@ function renderCraft(){
       h+='<button data-ok="'+(canPay?1:0)+'" onclick="if(+this.dataset.ok)doCraft()" style="margin-top:7px;background:'+(canPay?'#243820':'#2a1820')+';border:1px solid '+(canPay?'#3dc850':'#f04040')+';border-radius:6px;padding:6px 22px;color:'+(canPay?'#3dc850':'#f04040')+';font-family:inherit;font-size:13px;cursor:'+(canPay?'pointer':'not-allowed')+'">합성하기</button>';
       h+='</div>';
     } else {
-      h+='<div style="background:#2a1820;border:1px solid #553030;border-radius:8px;padding:8px;text-align:center;margin-bottom:8px;font-size:12px;color:#f06060">같은 슬롯끼리만 합성 가능해요</div>';
+      h+='<div style="background:#2a1820;border:1px solid #553030;border-radius:8px;padding:8px;text-align:center;margin-bottom:8px;font-size:12px;color:#f06060">조건에 맞는 같은 슬롯 조합만 합성 가능해요</div>';
     }
   }
   h+='<div class="st" style="margin:5px 0 4px">아이템 선택</div>';
