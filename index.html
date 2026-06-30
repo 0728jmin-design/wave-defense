@@ -320,20 +320,42 @@ function enemyAtkScale(wave){
   return base * late * (HELL_MODE?2.8:1);
 }
 function bossHpScale(wave){
-  const base = 1 + (wave - 1) * (HELL_MODE?0.95:0.38);
-  const bossStep = Math.max(0, Math.floor(wave / (HELL_MODE?3:5)) - 1);
-  const early = Math.pow(HELL_MODE?1.45:1.18, Math.min(bossStep, 3));
+  // 지옥모드 첫 보스가 3웨이브에 바로 나오기 때문에 초반 보스 HP를 크게 낮추고,
+  // 대신 4번째 보스 이후부터는 다시 가파르게 증가하도록 조정했다.
+  if(HELL_MODE){
+    const bossNo = Math.max(1, Math.floor(wave / 3)); // 3웨이브=1번째 보스, 6웨이브=2번째 보스
+    if(bossNo===1) return 0.85;
+    if(bossNo===2) return 1.35;
+    if(bossNo===3) return 2.10;
+    const lateStep = bossNo - 3;
+    const waveRamp = 1 + Math.max(0, wave - 9) * 0.12;
+    return 2.10 * waveRamp * Math.pow(1.30, lateStep);
+  }
+  const base = 1 + (wave - 1) * 0.38;
+  const bossStep = Math.max(0, Math.floor(wave / 5) - 1);
+  const early = Math.pow(1.18, Math.min(bossStep, 3));
   const lateStep = Math.max(0, bossStep - 3);
-  const late = Math.pow(HELL_MODE?2.0:1.45, lateStep);
-  return base * early * late * (HELL_MODE?3.0:1);
+  const late = Math.pow(1.45, lateStep);
+  return base * early * late;
 }
 function bossAtkScale(wave){
-  const base = 1 + (wave - 1) * (HELL_MODE?0.75:0.30);
-  const bossStep = Math.max(0, Math.floor(wave / (HELL_MODE?3:5)) - 1);
-  const early = Math.pow(HELL_MODE?1.25:1.10, Math.min(bossStep, 3));
+  // 지옥모드 첫 보스 공격력도 낮춰서 초반 즉사를 줄이고,
+  // 후반에는 보스 번호 기준으로 점점 강해지게 유지한다.
+  if(HELL_MODE){
+    const bossNo = Math.max(1, Math.floor(wave / 3));
+    if(bossNo===1) return 1.10;
+    if(bossNo===2) return 1.55;
+    if(bossNo===3) return 2.15;
+    const lateStep = bossNo - 3;
+    const waveRamp = 1 + Math.max(0, wave - 9) * 0.08;
+    return 2.15 * waveRamp * Math.pow(1.18, lateStep);
+  }
+  const base = 1 + (wave - 1) * 0.30;
+  const bossStep = Math.max(0, Math.floor(wave / 5) - 1);
+  const early = Math.pow(1.10, Math.min(bossStep, 3));
   const lateStep = Math.max(0, bossStep - 3);
-  const late = Math.pow(HELL_MODE?1.55:1.25, lateStep);
-  return base * early * late * (HELL_MODE?2.2:1);
+  const late = Math.pow(1.25, lateStep);
+  return base * early * late;
 }
 
 // ── 파티클 ─────────────────────────────────────────────
@@ -745,8 +767,11 @@ function mkBoss(wave){
   }
   if(bossIdx===4){
     // 방패 보스 전용
-    extra.shieldHp=Math.floor(1500*hpM);
-    extra.shieldMaxHp=Math.floor(1500*hpM);
+    // 지옥모드에서는 본체 HP와 별개로 방패량을 낮춰서 실제로 부술 수 있게 조정
+    const shieldBase=HELL_MODE?650:1500;
+    const shieldMul=HELL_MODE?0.55:1;
+    extra.shieldHp=Math.floor(shieldBase*hpM*shieldMul);
+    extra.shieldMaxHp=Math.floor(shieldBase*hpM*shieldMul);
     extra.shieldRegenCd=0;
     extra.shieldOn=true;
   }
@@ -873,10 +898,11 @@ function updBoss(b,dt){
     // 수정: 1초마다 1% 회복
     b.shieldRegenCd-=raw;
     if(b.shieldRegenCd<=0&&b.shieldHp<b.shieldMaxHp){
-      const regenAmount=Math.max(1,Math.floor(b.shieldMaxHp*SHIELD_BOSS_REGEN_RATE));
+      const regenRate=HELL_MODE?0.003:SHIELD_BOSS_REGEN_RATE;
+      const regenAmount=Math.max(1,Math.floor(b.shieldMaxHp*regenRate));
       b.shieldHp=Math.min(b.shieldMaxHp,b.shieldHp+regenAmount);
       b.shieldOn=b.shieldHp>0;
-      b.shieldRegenCd=SHIELD_BOSS_REGEN_INTERVAL;
+      b.shieldRegenCd=HELL_MODE?1400:SHIELD_BOSS_REGEN_INTERVAL;
     }
   }
 
@@ -996,12 +1022,41 @@ function startWave(){
     const n=HELL_MODE?(8+Math.floor(WAVE*3.5)+Math.floor(WAVE*0.8)):(4+Math.floor(WAVE*1.8)+Math.floor(WAVE/3));QUEUE=[];for(let i=0;i<n;i++)QUEUE.push(rndType());
   }
 }
+function weightedPick(weightMap){
+  const entries=Object.entries(weightMap).filter(function(kv){return kv[1]>0;});
+  const total=entries.reduce(function(a,kv){return a+kv[1];},0);
+  let r=Math.random()*total;
+  for(const kv of entries){
+    r-=kv[1];
+    if(r<=0)return kv[0];
+  }
+  return entries.length?entries[entries.length-1][0]:'normal';
+}
 function rndType(){
   if(WAVE<2)return'normal';
+
+  // 지옥모드: 기본몹 비중을 크게 낮추고, 특수몹을 더 자주 섞는다.
+  // 웨이브가 올라갈수록 normal 가중치는 줄고, 해금된 특수몹 가중치가 자연스럽게 늘어난다.
+  if(HELL_MODE){
+    const w={
+      normal:Math.max(0.08,0.36-WAVE*0.025),
+      fast:0.13,
+      bomber:0.14,
+      ranged:0.16,
+      shield:WAVE>=3?0.13:0,
+      healer:WAVE>=4?0.10:0,
+      charger:WAVE>=5?0.13:0,
+      splitter:WAVE>=6?0.11:0,
+      electric:WAVE>=5?0.11:0,
+      sniper:WAVE>=7?0.10:0
+    };
+    return weightedPick(w);
+  }
+
   const r=Math.random();
-  // 지옥모드: 등장 웨이브 절반으로 당기고, 등장 확률도 더 높게
-  const w15=HELL_MODE?7:15, w6=HELL_MODE?3:6, w8=HELL_MODE?4:8, w10=HELL_MODE?5:10, w12=HELL_MODE?6:12;
-  const hellBoost=HELL_MODE?1.6:1;
+  // 일반모드 확률은 기존 방식 유지
+  const w15=15, w6=6, w8=8, w10=10, w12=12;
+  const hellBoost=1;
   const fc=WAVE>=w15?Math.min(.20*hellBoost,((WAVE-w15)*.025+.05)*hellBoost):0;
   const bc=Math.min(.15*hellBoost,WAVE*.02*hellBoost);
   const rc=Math.min(.20*hellBoost,WAVE*.025*hellBoost);
