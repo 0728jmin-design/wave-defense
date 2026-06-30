@@ -19,6 +19,7 @@
 }">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>Wave Defense RPG</title>
+<!-- fix-name-atkspeed-v1 -->
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 body{background:#0a0814;color:#fff;font-family:'Malgun Gothic',sans-serif;overflow:hidden;user-select:none;touch-action:none}
@@ -363,7 +364,12 @@ const P={
     this.def=this.bdef+eDef+this.bdefB;
     this.spd=this.bspd+eSpd+this.bspdB*0.3;
     // 공격속도: 기본30 - 레벨 - 장비 - 스탯포인트(1당 2프레임 감소)
-    this.asp=Math.max(2,this.basp-lv-Math.floor(eAspd*0.25)-Math.floor((this.aspB||0)*0.5));
+    // 공격속도 밸런스: 프레임 수가 낮을수록 빠름.
+    // 기존에는 레벨/장비/스탯 효율이 너무 커서 후반에 발사 간격이 과도하게 짧아지는 문제가 있었다.
+    const aspFromLevel=Math.min(8,Math.floor(lv*0.35));
+    const aspFromEquip=Math.min(8,Math.floor(eAspd*0.12));
+    const aspFromStat=Math.min(6,Math.floor((this.aspB||0)*0.25));
+    this.asp=Math.max(10,this.basp-aspFromLevel-aspFromEquip-aspFromStat);
     this.critRate=5+(this.critB||0)+eCrit;  // 기본5% + 스탯 + 장비
     if(this.hp===undefined){this.hp=this.maxHp;this.mp=this.maxMp;}
   },
@@ -999,7 +1005,31 @@ function popup(x,y,txt,col){
 
 // ── 아이템 헬퍼 ────────────────────────────────────────
 function iData(raw){return typeof raw==='string'?ITEMS[raw]:raw;}
-function iName(raw){if(!raw)return'';if(typeof raw==='object'){const lv=raw.enhLv||0;const base=raw.baseName||raw.name||'아이템';if(raw.rarity==='초월')return base+' [초월]';if(raw.rarity==='고대')return base+' [고대]';return lv>0?base+' +'+lv:base;}return String(raw);}
+function slotLabelOf(slot){return {weapon:'무기',armor:'갑옷',boots:'부츠',ring:'반지'}[slot]||'아이템';}
+function rarityLabelOf(rarity){return {'일반':'일반','희귀':'희귀','전설':'전설','합성':'신화','신성':'신성','초월':'초월','고대':'고대'}[rarity]||'합성';}
+function craftItemName(rarity,slot){return rarityLabelOf(rarity)+slotLabelOf(slot);}
+function isGenericCraftName(d){
+  if(!d||!d.slot||!d.rarity)return false;
+  const cn=craftItemName(d.rarity,d.slot);
+  const nm=String(d.name||'').replace(/\s*\[(초월|고대)\]$/,'');
+  const bn=String(d.baseName||'').replace(/\s*\[(초월|고대)\]$/,'');
+  // 합성으로 만든 등급 장비는 등급+부위 이름으로 고정 표시한다.
+  // 단, 일반 장비를 +10으로 강화해서 초월된 경우에는 원래 이름(예: 용의 검 [초월])을 유지한다.
+  return d.craftNameFixed===true||nm===cn||bn===cn||(d.rarity==='합성'||d.rarity==='신성'||d.rarity==='고대');
+}
+function iName(raw){
+  if(!raw)return'';
+  if(typeof raw==='object'){
+    const lv=raw.enhLv||0;
+    if(isGenericCraftName(raw))return craftItemName(raw.rarity,raw.slot);
+    let base=raw.baseName||raw.name||'아이템';
+    base=String(base).replace(/\s*\+\d+$/,'').replace(/\s*\[(초월|고대)\]$/,'');
+    if(raw.rarity==='초월')return base+' [초월]';
+    if(raw.rarity==='고대')return base+' [고대]';
+    return lv>0?base+' +'+lv:base;
+  }
+  return String(raw);
+}
 function iCol(raw){const d=iData(raw);if(!d)return'#4af0f0';if(d.rarity==='고대')return'#ff8c00';if(d.rarity==='초월')return'#ff3030';if(d.rarity==='신성')return'#e8d0ff';return RC[d.rarity||'희귀']||'#4af0f0';}
 function iStats(raw){const d=iData(raw);if(!d)return'';const st=[];if(d.atk)st.push('ATK+'+d.atk);if(d.def)st.push('DEF+'+d.def);if(d.hp)st.push('HP+'+d.hp);if(d.spd)st.push('SPD+'+Math.round(d.spd*10)/10);if(d.mp)st.push('MP+'+d.mp);if(d.atkspd)st.push('공속+'+d.atkspd);if(d.crit)st.push('치명+'+d.crit+'%');if(d.rage)st.push('HP50%이하 ATK*2');return st.join(' ');}
 function sellPrice(raw){const d=iData(raw);if(!d)return 5;const base=d.rarity==='고대'?1200:d.rarity==='초월'?600:d.rarity==='신성'?450:d.rarity==='전설'?180:d.rarity==='희귀'?70:d.rarity==='합성'?300:25;return Math.floor(base*0.5);}
@@ -1162,7 +1192,8 @@ function craftPreview(a,b){
   // +5강 이상 전설 둘 → 신성
   // +10 초월 둘 → 고대
   // 추가 규칙:
-  // 다른 등급끼리는 기본적으로 더 높은 등급 유지 + 능력치 합산
+  // 표에 없는 다른 등급 조합은 높은 등급 유지 + 낮은 재료 스탯 25%만 흡수
+  // 이때 높은 등급 장비의 기존 스탯에는 배율을 다시 곱하지 않는다. 공격력 무한 증폭 방지.
   // 신성+신성 → 초월
   // 고대가 포함되면 결과는 고대
   const aIsTrans10=a.rarity==='초월'&&(a.enhLv||0)>=10;
@@ -1170,12 +1201,14 @@ function craftPreview(a,b){
   const bothLegendPlus5=a.rarity==='전설'&&b.rarity==='전설'&&(a.enhLv||0)>=5&&(b.enhLv||0)>=5;
 
   let newR=null;
+  let fallbackAbsorb=false;
 
   // 최우선 특수 진화
   if(aIsTrans10&&bIsTrans10){
     newR='고대';
   } else if(hasRarity('고대')){
     newR='고대';
+    fallbackAbsorb=true;
   } else if(bothLegendPlus5){
     newR='신성';
   } else if(sameRarity('신성')){
@@ -1191,22 +1224,40 @@ function craftPreview(a,b){
   } else if((a.rarity==='일반'&&b.rarity==='희귀')||(a.rarity==='희귀'&&b.rarity==='일반')){
     newR='희귀';
   } else {
-    // 표에 없던 조합: 더 높은 등급 유지
-    // 예) 희귀+전설 → 전설, 전설+합성 → 신화, 합성+신성 → 신성, 초월+신성 → 초월
+    // 표에 없던 조합: 더 높은 등급 유지, 낮은 등급은 일부 스탯만 흡수
     newR=maxRarity();
+    fallbackAbsorb=true;
   }
 
   const merged={slot:a.slot,rarity:newR,isCrafted:true};
-  for(const key of ['atk','def','hp','mp','spd','atkspd','crit']){
-    const v=(a[key]||0)+(b[key]||0);
-    if(v>0){
-      let mult=1.1;
-      if(newR==='신성')mult=1.2;
-      if(newR==='초월')mult=1.35;
-      if(newR==='고대')mult=1.5;
-      merged[key]=Math.ceil(v*mult);
+  const keys=['atk','def','hp','mp','spd','atkspd','crit'];
+
+  if(fallbackAbsorb){
+    const high=rankScore(a.rarity)>=rankScore(b.rarity)?a:b;
+    const low=high===a?b:a;
+    for(const key of keys){
+      const hv=high[key]||0;
+      const lv=low[key]||0;
+      if(hv>0||lv>0){
+        // 표 밖 조합은 고등급 장비 자체에 배율을 다시 곱하지 않음.
+        // 낮은 재료 스탯의 25%만 추가해서 반복 합성으로 공격력이 폭증하는 버그 방지.
+        const add=key==='spd'?Math.round(lv*0.25*10)/10:Math.ceil(lv*0.25);
+        merged[key]=key==='spd'?Math.round((hv+add)*10)/10:hv+add;
+      }
+    }
+  } else {
+    for(const key of keys){
+      const v=(a[key]||0)+(b[key]||0);
+      if(v>0){
+        let mult=1.1;
+        if(newR==='신성')mult=1.2;
+        if(newR==='초월')mult=1.35;
+        if(newR==='고대')mult=1.5;
+        merged[key]=key==='spd'?Math.round(v*mult*10)/10:Math.ceil(v*mult);
+      }
     }
   }
+
   if(a.rage||b.rage) merged.rage=true;
 
   // 합성으로 만들어진 결과는 강화 수치를 초기화한다.
@@ -1226,6 +1277,7 @@ function craftPreview(a,b){
   const slotLabel={weapon:'무기',armor:'갑옷',boots:'부츠',ring:'반지'}[a.slot]||'아이템';
   merged.name=rarityLabel+slotLabel;
   merged.baseName=merged.name;
+  merged.craftNameFixed=true;
   return merged;
 }
 function craftCost(a,b){
@@ -1279,7 +1331,7 @@ function enhanceItem(raw){
   if(success){
     newItem.enhLv=(lv+1);
     // 스탯 강화: 각 스탯 +15% per 레벨
-    const boost=1+newItem.enhLv*0.60;
+    const boost=1+newItem.enhLv*0.15;
     if(d.atk)  newItem.atk  =Math.ceil((d.baseAtk ||d.atk) *boost);
     if(d.def)  newItem.def  =Math.ceil((d.baseDef ||d.def) *boost);
     if(d.hp)   newItem.hp   =Math.ceil((d.baseHp  ||d.hp)  *boost);
@@ -1325,7 +1377,7 @@ function enhanceItem(raw){
       if(d.baseSpd) newItem.spd=d.baseSpd;
       if(d.baseMp)  newItem.mp =d.baseMp;
     } else {
-      const boost2=1+newLv*0.60;
+      const boost2=1+newLv*0.15;
       if(d.baseAtk) newItem.atk=Math.ceil(d.baseAtk*boost2);
       if(d.baseDef) newItem.def=Math.ceil(d.baseDef*boost2);
       if(d.baseHp)  newItem.hp =Math.ceil(d.baseHp *boost2);
@@ -1362,7 +1414,7 @@ function renderEnhance(selectedIdx){
       const failPenalty=lv>=6?'단계 하락':'유지';
       const col=RC[d.rarity||'희귀']||'#4af0f0';
       h+='<div style="background:#1a2830;border:2px solid '+col+';border-radius:10px;padding:12px;margin-bottom:8px;text-align:center">';
-      h+='<div style="color:'+col+';font-size:15px;font-weight:bold">'+(d.name||iName(raw))+' <span style="color:#ffc828">+'+lv+'</span></div>';
+      h+='<div style="color:'+col+';font-size:15px;font-weight:bold">'+iName(raw)+' <span style="color:#ffc828">+'+lv+'</span></div>';
       h+='<div style="font-size:11px;color:#888;margin:4px 0">'+iStats(raw)+'</div>';
       if(lv<10){
         h+='<div style="font-size:12px;margin:6px 0">다음 단계: <span style="color:#ffc828">+' +(lv+1)+'</span> &nbsp; 성공률: <span style="color:'+(nextRate>=60?'#3dc850':nextRate>=40?'#ffc828':'#f04040')+'">'+nextRate+'%</span></div>';
@@ -1387,7 +1439,7 @@ function renderEnhance(selectedIdx){
     const isSel=(selectedIdx===i);
     const blocked=d.rarity==='합성'||d.rarity==='신성'||d.rarity==='초월'||d.rarity==='고대';
     h+='<div data-i="'+i+'" data-b="'+(blocked?1:0)+'" onclick="if(!+this.dataset.b)renderEnhance(+this.dataset.i)" style="cursor:'+(blocked?'not-allowed':'pointer')+';display:flex;align-items:center;background:'+(isSel?'#1e2830':'#1a1830')+';border:1px solid '+(isSel?'#ffc828':'#333')+';opacity:'+(blocked?'0.5':'1')+';border-radius:6px;padding:5px 8px;margin:3px 0">';
-    h+='<div style="flex:1"><span style="color:'+col+';font-size:12px;font-weight:bold">'+(d.name||iName(raw))+'</span>';
+    h+='<div style="flex:1"><span style="color:'+col+';font-size:12px;font-weight:bold">'+iName(raw)+'</span>';
     if(lv>0) h+=' <span style="color:'+lvCol+';font-size:12px;font-weight:bold">+'+lv+'</span>';
     h+='<div style="color:#666;font-size:10px">'+iStats(raw)+'</div></div>';
     h+='<span style="color:'+(blocked?'#555':lvCol)+';font-size:11px;white-space:nowrap">'+(blocked?'강화불가':lv>=10?'MAX':ENHANCE_COST[Math.min(lv+1,10)]+'G')+'</span>';
@@ -1431,7 +1483,7 @@ function openCraft(){CRAFT_SEL=[];OV_OPEN=true;document.getElementById('ov').cla
 function renderCraft(){
   const list=allInvList();
   let h='<div class="pt">⚗ 합성</div>';
-  h+='<div style="font-size:11px;color:#aaa;text-align:center;margin-bottom:8px">같은 슬롯 2개 선택 → 표 밖 조합은 높은 등급 유지 / 신성+신성=초월 / +10초월 둘=고대</div>';
+  h+='<div style="font-size:11px;color:#aaa;text-align:center;margin-bottom:8px">같은 슬롯 2개 선택 → 표 밖 조합은 높은 등급 유지 + 낮은 재료 25% 흡수 / 신성+신성=초월 / +10초월 둘=고대</div>';
   h+='<div style="display:flex;gap:8px;margin-bottom:8px">';
   for(let i=0;i<2;i++){
     const sel=CRAFT_SEL[i]!==undefined?list[CRAFT_SEL[i]]:null;
@@ -1650,7 +1702,7 @@ function renderGameOver(status){
     +'<div style="color:#ccc;margin:5px 0">처치 '+P.kills+' | 골드 '+P.gold+'</div>'
     +'<div style="background:#1a1830;border:1px solid #333;border-radius:8px;padding:10px;margin:12px 0;text-align:left">'
     +'<div style="color:#4af0b0;font-weight:bold;font-size:13px;margin-bottom:2px;text-align:center">온라인 랭킹 등록</div>'
-    +'<div style="color:#666;font-size:10px;margin-bottom:6px;text-align:center">rank-xhr-fix-v2</div>'
+    +'<div style="color:#666;font-size:10px;margin-bottom:6px;text-align:center">rank-xhr-fix-v2-craft-atkfix1</div>'
     +'<div style="display:flex;gap:6px">'
     +'<input id="rankName" maxlength="12" placeholder="닉네임 12자" style="flex:1;background:#0a0814;border:1px solid #444;border-radius:6px;color:#fff;padding:8px;font-family:inherit">'
     +'<button class="ob" id="rankSubmitBtn" style="width:auto;margin:0;border-color:#ffc828;color:#ffc828;padding:8px 14px" onclick="submitRanking()">등록</button>'
@@ -1915,7 +1967,7 @@ function loop(ts){
       else if(crit)    popup(P.x,P.y-40,'CRIT x'+critMult.toFixed(1),'#ff8c00');
       const aspMs=P.asp*(1000/60);
       const zapMult=P.zapTimer>0?2.5:1.0;
-      P.atkT=Math.max(30,P.berT>0?Math.floor(aspMs*0.45*zapMult):aspMs*zapMult);
+      P.atkT=Math.max(80,P.berT>0?Math.floor(aspMs*0.65*zapMult):aspMs*zapMult);
     }
     else P.atkT=10;
   }
