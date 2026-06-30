@@ -19,7 +19,7 @@
 }">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>Wave Defense RPG</title>
-<!-- fix-name-atkspeed-v1 -->
+<!-- hell-ranking-split-boss-cycle-v1 -->
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 body{background:#0a0814;color:#fff;font-family:'Malgun Gothic',sans-serif;overflow:hidden;user-select:none;touch-action:none}
@@ -97,9 +97,15 @@ canvas{display:block;touch-action:none}
         <div>🏆 최대한 많은 웨이브를 버텨라!</div>
       </div>
     </div>
-    <button id="sbtn" onclick="startGame()" style="background:linear-gradient(135deg,#ffc828,#ff8c00);border:none;border-radius:14px;padding:18px 70px;font-size:22px;font-weight:bold;color:#0a0814;cursor:pointer;font-family:inherit;box-shadow:0 0 40px #ffc82870;transition:transform 0.1s,box-shadow 0.1s">
-      ▶ 게임 시작
-    </button>
+    <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+      <button id="sbtn" onclick="startGame(false)" style="background:linear-gradient(135deg,#ffc828,#ff8c00);border:none;border-radius:14px;padding:16px 40px;font-size:19px;font-weight:bold;color:#0a0814;cursor:pointer;font-family:inherit;box-shadow:0 0 40px #ffc82870;transition:transform 0.1s,box-shadow 0.1s">
+        ▶ 일반 모드
+      </button>
+      <button id="hbtn" onclick="startGame(true)" style="background:linear-gradient(135deg,#8b0000,#330000);border:2px solid #ff2020;border-radius:14px;padding:16px 40px;font-size:19px;font-weight:bold;color:#ff6060;cursor:pointer;font-family:inherit;box-shadow:0 0 40px #ff202070;transition:transform 0.1s,box-shadow 0.1s">
+        🔥 지옥 모드
+      </button>
+    </div>
+    <div style="margin-top:10px;font-size:11px;color:#ff6060">지옥 모드: 적 강화 · 빠른 성장 · 보스 추가탄막 · 극한 난이도</div>
     
   </div>
 </div>
@@ -200,10 +206,13 @@ function resetGameState(){
   WAVE=0;BETWEEN=true;BTTIMER=180;QUEUE=[];SPAWNT=0;SHOPOPEN=false;
   ENEMIES=[];BOSS=null;DROPS=[];BULS=[];EXPS=[];PX=[];
   GAMEOVER=false;OV_OPEN=false;RANK_SUBMITTED=false;LAST_SCORE=0;
+  // 보스 랜덤 가방 초기화: 새 게임마다 보스 순서는 다시 랜덤
+  BOSS_BAG=[];LAST_BOSS_IDX=null;
   document.getElementById('ov').classList.add('h');
   genShop();
 }
-function startGame(){
+function startGame(hellMode){
+  HELL_MODE=!!hellMode;
   resetGameState();
   document.getElementById('ss').style.display='none';
   GAME_STARTED=true;
@@ -211,6 +220,7 @@ function startGame(){
 function restartGame(){
   resetGameState();
   GAME_STARTED=true;
+  // HELL_MODE는 유지됨 (마지막 선택 모드로 재시작)
 }
 // ── 모바일 감지 ─────────────────────────────────────────
 const IS_MOB = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -293,20 +303,37 @@ const SHIELD_BOSS_BREAK_DELAY = 3000;
 // 후반으로 갈수록 플레이어 성장보다 적 성장이 더 약해지는 문제를 보정
 // HP는 웨이브 15 이후, 공격력은 웨이브 12 이후 점점 더 빠르게 증가
 function enemyHpScale(wave){
-  const base = 1 + (wave - 1) * 0.18;
-  const tier = [1, 2.7, 5.8, 10.5][Math.min(3, Math.floor((wave - 1) / 3))];
-  const late = wave <= 15 ? 1 : Math.pow(1.045, wave - 15);
+  const base = 1 + (wave - 1) * (HELL_MODE?0.55:0.18);
+  const tier = HELL_MODE
+    ? [3.0, 8.0, 18.0, 32.0][Math.min(3, Math.floor((wave - 1) / 3))]
+    : [1, 2.7, 5.8, 10.5][Math.min(3, Math.floor((wave - 1) / 3))];
+  const lateStart = HELL_MODE?6:15;
+  const lateRate = HELL_MODE?1.13:1.045;
+  const late = wave <= lateStart ? 1 : Math.pow(lateRate, wave - lateStart);
   return base * tier * late;
 }
 function enemyAtkScale(wave){
-  const base = 1 + (wave - 1) * 0.18;
-  const late = wave <= 12 ? 1 : Math.pow(1.035, wave - 12);
-  return base * late;
+  const base = 1 + (wave - 1) * (HELL_MODE?0.55:0.18);
+  const lateStart = HELL_MODE?5:12;
+  const lateRate = HELL_MODE?1.10:1.035;
+  const late = wave <= lateStart ? 1 : Math.pow(lateRate, wave - lateStart);
+  return base * late * (HELL_MODE?2.8:1);
 }
-function bossScale(wave){
-  const base = 1 + (wave - 1) * 0.45;
-  const late = wave <= 20 ? 1 : Math.pow(1.03, wave - 20);
-  return base * late;
+function bossHpScale(wave){
+  const base = 1 + (wave - 1) * (HELL_MODE?0.95:0.38);
+  const bossStep = Math.max(0, Math.floor(wave / (HELL_MODE?3:5)) - 1);
+  const early = Math.pow(HELL_MODE?1.45:1.18, Math.min(bossStep, 3));
+  const lateStep = Math.max(0, bossStep - 3);
+  const late = Math.pow(HELL_MODE?2.0:1.45, lateStep);
+  return base * early * late * (HELL_MODE?3.0:1);
+}
+function bossAtkScale(wave){
+  const base = 1 + (wave - 1) * (HELL_MODE?0.75:0.30);
+  const bossStep = Math.max(0, Math.floor(wave / (HELL_MODE?3:5)) - 1);
+  const early = Math.pow(HELL_MODE?1.25:1.10, Math.min(bossStep, 3));
+  const lateStep = Math.max(0, bossStep - 3);
+  const late = Math.pow(HELL_MODE?1.55:1.25, lateStep);
+  return base * early * late * (HELL_MODE?2.2:1);
 }
 
 // ── 파티클 ─────────────────────────────────────────────
@@ -529,10 +556,15 @@ function mkE(x,y,wave,type){
     sniper:  {col:'#00e0ff',r:11,spd:0.3,hp:15,atk:25, xp:28,gold:12},  // 저격수
     electric:{col:'#ffe000',r:13,spd:1.0,hp:20,atk:10, xp:22,gold:10},  // 전기
   }[type]||{col:'#e03030',r:14,spd:1.2,hp:30,atk:8,xp:10,gold:3};
-  const maxHp=Math.floor(T.hp*hpScale);
+  // 지옥모드: 기본(normal) 적도 별도 추가 강화 + 전체 속도 상승
+  const hellNormalBoost=(HELL_MODE&&type==='normal')?1.6:1;
+  const maxHp=Math.floor(T.hp*hpScale*hellNormalBoost);
+  const hellSpdBoost=HELL_MODE?1.35:1;
   return{x,y,type,r:T.r,col:T.col,
     maxHp:maxHp,hp:maxHp,
-    atk:Math.floor(T.atk*atkScale),spd:type==='fast'?T.spd+wave*0.15:T.spd,xp:T.xp,gold:T.gold,
+    atk:Math.floor(T.atk*atkScale*hellNormalBoost),
+    spd:(type==='fast'?T.spd+wave*0.15:T.spd)*hellSpdBoost,
+    xp:T.xp,gold:T.gold,
     flash:0,atkT:1000,shootT:(type==='ranged'||type==='sniper')?1500:999999,
     fuseOn:false,fuseT:0,
     // 타입별 특수 상태
@@ -667,9 +699,37 @@ function drawE(e){
 }
 
 // ── 보스 ───────────────────────────────────────────────
+let BOSS_BAG=[],LAST_BOSS_IDX=null;
+function shuffleArr(arr){
+  for(let i=arr.length-1;i>0;i--){
+    const j=Math.floor(Math.random()*(i+1));
+    const t=arr[i];arr[i]=arr[j];arr[j]=t;
+  }
+  return arr;
+}
+function refillBossBag(){
+  // 0 마법사, 1 전사, 2 암살자, 3 흡혈귀, 4 방패 보스
+  const bag=shuffleArr([0,1,2,3,4]);
+  // 이전 가방 마지막 보스와 새 가방 첫 보스가 같으면 중복 체감이 강해서 한 번만 섞어준다.
+  if(LAST_BOSS_IDX!==null&&bag[0]===LAST_BOSS_IDX&&bag.length>1){
+    const swapIdx=1+Math.floor(Math.random()*(bag.length-1));
+    const t=bag[0];bag[0]=bag[swapIdx];bag[swapIdx]=t;
+  }
+  return bag;
+}
+function nextBossIdx(){
+  if(!BOSS_BAG.length)BOSS_BAG=refillBossBag();
+  const idx=BOSS_BAG.shift();
+  LAST_BOSS_IDX=idx;
+  return idx;
+}
 function mkBoss(wave){
-  const m=bossScale(wave);
-  const bossIdx=wave===5?Math.floor(Math.random()*2):Math.floor(Math.random()*5);  // wave5는 마법사/전사만, 이후 5종 랜덤
+  const hpM=bossHpScale(wave);
+  const atkM=bossAtkScale(wave);
+  // 고정 순서가 아니라, 랜덤 가방 방식으로 보스 선택
+  // 한 가방에 5종 보스가 모두 1번씩 들어가고, 가방이 비면 다시 섞는다.
+  // 그래서 순서는 매번 랜덤이지만 흡혈귀/방패 보스가 계속 안 나오는 문제는 막는다.
+  const bossIdx=nextBossIdx();
   const cfg=[
     {col:'#c030c0',hp:2600,atk:50,spd:1.4,r:32,label:'마법사',  shape:'circle',resist:'번개 폭발'},
     {col:'#e05020',hp:4200,atk:70,spd:1.3,r:36,label:'전사',    shape:'rect',  resist:'화염구'},
@@ -685,14 +745,14 @@ function mkBoss(wave){
   }
   if(bossIdx===4){
     // 방패 보스 전용
-    extra.shieldHp=Math.floor(1500*m);
-    extra.shieldMaxHp=Math.floor(1500*m);
+    extra.shieldHp=Math.floor(1500*hpM);
+    extra.shieldMaxHp=Math.floor(1500*hpM);
     extra.shieldRegenCd=0;
     extra.shieldOn=true;
   }
   return Object.assign({x:CW/2,y:80,r:cfg.r,col:cfg.col,bossType:bossIdx,bossLabel:cfg.label,bossShape:cfg.shape,bossResist:cfg.resist,
-    maxHp:Math.floor(cfg.hp*m),hp:Math.floor(cfg.hp*m),
-    atk:Math.floor(cfg.atk*m),spd:cfg.spd,
+    maxHp:Math.floor(cfg.hp*hpM),hp:Math.floor(cfg.hp*hpM),
+    atk:Math.floor(cfg.atk*atkM),spd:cfg.spd,
     flash:0,phase:0,pat:'chase',patT:0,orbA:0,
     shtCd:0,meleeCd:0,dashT:null,chTgt:null,
     alive:true,is_boss:true,xp:300,gold:50,_kh:false},extra);
@@ -756,17 +816,17 @@ function updBoss(b,dt){
   // spiral: 나선형 투사체
   if(b.pat==='spiral'&&b.shtCd<=0){
     b.spiralAngle=(b.spiralAngle||0)+0.4;
-    for(let i=0;i<5;i++){
-      const a=b.spiralAngle+i*Math.PI*2/5;
-      spawnBul(b.x,b.y,b.x+Math.cos(a)*100,b.y+Math.sin(a)*100,b.atk*0.7,'#ff80ff',6,8,'enemy',true);
+    const spiralN=HELL_MODE?7:5;for(let i=0;i<spiralN;i++){
+      const a=b.spiralAngle+i*Math.PI*2/spiralN;
+      spawnBul(b.x,b.y,b.x+Math.cos(a)*100,b.y+Math.sin(a)*100,b.atk*0.7,'#ff80ff',6,HELL_MODE?9:8,'enemy',true);
     }
     b.shtCd=200;
   }
   if(b.pat==='shoot3'&&b.shtCd<=0){
-    for(let i=-2;i<=2;i++){const a=Math.atan2(dy,dx)+i*0.28;spawnBul(b.x,b.y,b.x+Math.cos(a)*100,b.y+Math.sin(a)*100,b.atk,'#ff30ff',8,8,'enemy',true);}
+    const shoot3N=HELL_MODE?3:2;for(let i=-shoot3N;i<=shoot3N;i++){const a=Math.atan2(dy,dx)+i*(HELL_MODE?0.22:0.28);spawnBul(b.x,b.y,b.x+Math.cos(a)*100,b.y+Math.sin(a)*100,b.atk,'#ff30ff',8,HELL_MODE?9:8,'enemy',true);}
     b.shtCd=800;
   } else if(b.pat==='spread'&&b.shtCd<=0){
-    for(let i=0;i<12;i++){const a=Math.PI*2/12*i;spawnBul(b.x,b.y,b.x+Math.cos(a)*100,b.y+Math.sin(a)*100,b.atk*0.8,'#ff8cff',7,6,'enemy',true);}
+    const spreadN=HELL_MODE?16:12;for(let i=0;i<spreadN;i++){const a=Math.PI*2/spreadN*i;spawnBul(b.x,b.y,b.x+Math.cos(a)*100,b.y+Math.sin(a)*100,b.atk*0.8,'#ff8cff',7,HELL_MODE?7:6,'enemy',true);}
     b.shtCd=1200-b.phase*200;
   }
   // 흡혈귀 패턴
@@ -925,28 +985,32 @@ let WAVE=0,BETWEEN=true,BTTIMER=180,QUEUE=[],SPAWNT=0,SHOPOPEN=false;
 function startWave(){
   WAVE++;BETWEEN=false;SPAWNT=0;ENEMIES=[];BOSS=null;DROPS=[];
   genShop();
-  if(WAVE%5===0){
+  const bossWaveCheck=HELL_MODE?(WAVE%3===0):(WAVE%5===0);
+  if(bossWaveCheck){
     BOSS=mkBoss(WAVE);QUEUE=[];
     // 보스 웨이브도 후반에는 잡몹 수가 늘어나도록 조정
-    const n=WAVE===5?4:Math.min(22,8+Math.floor(WAVE/10)*3);
+    const n=HELL_MODE?(WAVE===3?8:Math.min(40,16+Math.floor(WAVE/5)*5)):(WAVE===5?4:Math.min(22,8+Math.floor(WAVE/10)*3));
     for(let i=0;i<n;i++)QUEUE.push(rndType());
   } else {
     // 미니보스: 짝수 웨이브=정예기사, 3의배수 웨이브=거인골렘 (5의배수 제외)
-    const n=4+Math.floor(WAVE*1.8)+Math.floor(WAVE/3);QUEUE=[];for(let i=0;i<n;i++)QUEUE.push(rndType());
+    const n=HELL_MODE?(8+Math.floor(WAVE*3.5)+Math.floor(WAVE*0.8)):(4+Math.floor(WAVE*1.8)+Math.floor(WAVE/3));QUEUE=[];for(let i=0;i<n;i++)QUEUE.push(rndType());
   }
 }
 function rndType(){
   if(WAVE<2)return'normal';
   const r=Math.random();
-  const fc=WAVE>=15?Math.min(.20,(WAVE-15)*.025+.05):0; // 돌격(암살자) wave15+
-  const bc=Math.min(.15,WAVE*.02);    // 자폭
-  const rc=Math.min(.20,WAVE*.025);   // 원거리
-  const sc=WAVE>=6?Math.min(.10,( WAVE-6)*.02):0;   // 방패병 wave6+
-  const hc=WAVE>=8?Math.min(.08,(WAVE-8)*.015):0;   // 치료사 wave8+
-  const cc=WAVE>=10?Math.min(.08,(WAVE-10)*.015):0; // 돌격기병 wave10+
-  const spc=WAVE>=12?Math.min(.07,(WAVE-12)*.012):0;// 분열체 wave12+
-  const snc=WAVE>=15?Math.min(.07,(WAVE-15)*.012):0;// 저격수 wave15+
-  const elc=WAVE>=10?Math.min(.08,(WAVE-10)*.015):0; // 전기 wave10+
+  // 지옥모드: 등장 웨이브 절반으로 당기고, 등장 확률도 더 높게
+  const w15=HELL_MODE?7:15, w6=HELL_MODE?3:6, w8=HELL_MODE?4:8, w10=HELL_MODE?5:10, w12=HELL_MODE?6:12;
+  const hellBoost=HELL_MODE?1.6:1;
+  const fc=WAVE>=w15?Math.min(.20*hellBoost,((WAVE-w15)*.025+.05)*hellBoost):0;
+  const bc=Math.min(.15*hellBoost,WAVE*.02*hellBoost);
+  const rc=Math.min(.20*hellBoost,WAVE*.025*hellBoost);
+  const sc=WAVE>=w6?Math.min(.10*hellBoost,((WAVE-w6)*.02)*hellBoost):0;
+  const hc=WAVE>=w8?Math.min(.08*hellBoost,((WAVE-w8)*.015)*hellBoost):0;
+  const cc=WAVE>=w10?Math.min(.08*hellBoost,((WAVE-w10)*.015)*hellBoost):0;
+  const spc=WAVE>=w12?Math.min(.07*hellBoost,((WAVE-w12)*.012)*hellBoost):0;
+  const snc=WAVE>=w15?Math.min(.07*hellBoost,((WAVE-w15)*.012)*hellBoost):0;
+  const elc=WAVE>=w10?Math.min(.08*hellBoost,((WAVE-w10)*.015)*hellBoost):0;
   let cum=0;
   if(r<(cum+=fc))return'fast';
   if(r<(cum+=bc))return'bomber';
@@ -968,7 +1032,7 @@ function spawnAt(type){
 }
 function waveTick(dt){
   if(BETWEEN){if(SHOPOPEN)return;BTTIMER-=dt;if(BTTIMER<=0){startWave();BTTIMER=180;}return;}
-  SPAWNT-=dt;if(SPAWNT<=0&&QUEUE.length>0){spawnAt(QUEUE.shift());SPAWNT=Math.max(15,50-WAVE*2);}
+  SPAWNT-=dt;if(SPAWNT<=0&&QUEUE.length>0){spawnAt(QUEUE.shift());SPAWNT=HELL_MODE?Math.max(4,22-WAVE*1.5):Math.max(15,50-WAVE*2);}
   const alive=ENEMIES.filter(e=>e.alive).length+(BOSS&&BOSS.alive?1:0);
   if(QUEUE.length===0&&alive===0){BETWEEN=true;BTTIMER=180;spawnP(CW/2,CH/2,'#ffc828',25,55,7);}
 }
@@ -1637,6 +1701,7 @@ function closeOv(){OV_OPEN=false;document.getElementById('ov').classList.add('h'
 // ── 온라인 랭킹 / 게임오버 ─────────────────────────────
 let GAMEOVER=false;
 let GAME_STARTED=false;
+let HELL_MODE=false;
 let RANK_SUBMITTED=false;
 let LAST_SCORE=0;
 
@@ -1691,6 +1756,12 @@ function cleanRankName(raw){
   if(!s)s='player';
   return s.slice(0,12);
 }
+function rankPath(){
+  // 일반/지옥 랭킹 분리: 기존 일반 랭킹 데이터는 /rankings 유지, 지옥은 /rankings_hell 사용
+  return HELL_MODE?'rankings_hell':'rankings';
+}
+function rankModeLabel(){return HELL_MODE?'🔥 지옥 모드':'⚔ 일반 모드';}
+function rankModeColor(){return HELL_MODE?'#ff6060':'#4af0b0';}
 function renderGameOver(status){
   const ovc=document.getElementById('ovc');
   const score=LAST_SCORE||calcScore();
@@ -1698,20 +1769,21 @@ function renderGameOver(status){
     +'<div style="text-align:center">'
     +'<div style="font-size:38px;color:#f04040;font-weight:bold;margin-bottom:10px">GAME OVER</div>'
     +'<div style="color:#ffc828;font-size:22px;font-weight:bold;margin:6px 0">점수 '+score.toLocaleString()+'</div>'
+    +'<div style="color:'+rankModeColor()+';font-size:13px;font-weight:bold;margin:4px 0">'+rankModeLabel()+'</div>'
     +'<div style="color:#ccc;margin:5px 0">Wave '+WAVE+' | Lv.'+P.lv+'</div>'
     +'<div style="color:#ccc;margin:5px 0">처치 '+P.kills+' | 골드 '+P.gold+'</div>'
     +'<div style="background:#1a1830;border:1px solid #333;border-radius:8px;padding:10px;margin:12px 0;text-align:left">'
     +'<div style="color:#4af0b0;font-weight:bold;font-size:13px;margin-bottom:2px;text-align:center">온라인 랭킹 등록</div>'
-    +'<div style="color:#666;font-size:10px;margin-bottom:6px;text-align:center">rank-xhr-fix-v2-craft-atkfix1</div>'
+    +'<div style="color:#666;font-size:10px;margin-bottom:6px;text-align:center">rank-split-v1-boss-cycle</div>'
     +'<div style="display:flex;gap:6px">'
     +'<input id="rankName" maxlength="12" placeholder="닉네임 12자" style="flex:1;background:#0a0814;border:1px solid #444;border-radius:6px;color:#fff;padding:8px;font-family:inherit">'
     +'<button class="ob" id="rankSubmitBtn" style="width:auto;margin:0;border-color:#ffc828;color:#ffc828;padding:8px 14px" onclick="submitRanking()">등록</button>'
     +'</div>'
-    +'<div id="rankStatus" style="font-size:11px;color:#aaa;margin-top:6px;text-align:center">'+escHtml(status||'닉네임을 입력하고 랭킹에 등록해봐.')+'</div>'
+    +'<div id="rankStatus" style="font-size:11px;color:#aaa;margin-top:6px;text-align:center">'+escHtml(status||'닉네임을 입력하고 현재 모드 랭킹에 등록해봐.')+'</div>'
     +'</div>'
     +'<div style="background:#12101e;border:1px solid #333;border-radius:8px;padding:10px;margin-top:8px;text-align:left">'
     +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'
-    +'<span style="color:#ffc828;font-weight:bold">🏆 TOP 10 랭킹</span>'
+    +'<span style="color:#ffc828;font-weight:bold">🏆 '+rankModeLabel()+' TOP 10</span>'
     +'<button onclick="loadLeaderboard()" style="background:#1a1830;border:1px solid #444;border-radius:5px;color:#aaa;font-size:11px;padding:3px 8px;cursor:pointer;font-family:inherit">새로고침</button>'
     +'</div>'
     +'<div id="rankList" style="font-size:12px;color:#aaa;text-align:center;padding:8px">불러오는 중...</div>'
@@ -1744,7 +1816,7 @@ async function submitRanking(){
   if(btn){btn.disabled=true;btn.textContent='등록중...';}
   setRankStatus('서버에 기록을 보내는 중...','#aaa');
   try{
-    await dbRequest('POST',RANK_DB_URL+'/rankings.json',data,8000);
+    await dbRequest('POST',RANK_DB_URL+'/'+rankPath()+'.json',data,8000);
     RANK_SUBMITTED=true;
     setRankStatus('등록 완료! TOP 10을 새로 불러왔어.','#4af0b0');
     if(btn){btn.textContent='완료';btn.style.color='#4af0b0';btn.style.borderColor='#4af0b0';}
@@ -1765,7 +1837,7 @@ async function loadLeaderboard(){
   if(!RANK_DB_READY){box.innerHTML='<span style="color:#f04040">Firebase 주소 없음</span>';return;}
   box.textContent='불러오는 중...';
   try{
-    const response=await dbRequest('GET',RANK_DB_URL+'/rankings.json?orderBy=%22score%22&limitToLast=10',undefined,8000);
+    const response=await dbRequest('GET',RANK_DB_URL+'/'+rankPath()+'.json?orderBy=%22score%22&limitToLast=10',undefined,8000);
     const obj=response.data;
     const arr=obj?Object.keys(obj).map(function(k){return obj[k];}):[];
     arr.sort(function(a,b){return (b.score||0)-(a.score||0) || (a.createdAt||0)-(b.createdAt||0);});
@@ -1791,7 +1863,7 @@ async function loadLeaderboard(){
 function showGO(){
   GAMEOVER=true;OV_OPEN=true;LAST_SCORE=calcScore();
   document.getElementById('ov').classList.remove('h');
-  renderGameOver('닉네임을 입력하고 랭킹에 등록해봐.');
+  renderGameOver('닉네임을 입력하고 현재 모드 랭킹에 등록해봐.');
 }
 
 // ── 입력 ───────────────────────────────────────────────
@@ -1865,7 +1937,7 @@ function updateHUD(){
     document.getElementById('m-mpb').style.width=(P.mp/P.maxMp*100)+'%';
     document.getElementById('m-xpb').style.width=(P.xp/P.xpN*100)+'%';
     document.getElementById('m-lv').textContent='Lv.'+P.lv;
-    document.getElementById('m-wave').textContent='WAVE '+WAVE;
+    document.getElementById('m-wave').textContent=(HELL_MODE?'🔥':'')+'WAVE '+WAVE;
     document.getElementById('m-enemies').textContent='적 '+alive;
     document.getElementById('m-gold').textContent=P.gold+'G';
     document.getElementById('m-kills').textContent='처치 '+P.kills;
@@ -1902,8 +1974,8 @@ function updateHUD(){
     document.getElementById('bki').textContent=P.berT>0?'분신술 '+Math.ceil(P.berT/1000)+'s':(rageWepHud?'🔥 분노! ATK×2':'');
     document.getElementById('spi').style.display=P.sp>0?'block':'none';
     if(P.sp>0)document.getElementById('spc').textContent=P.sp;
-    document.getElementById('wnum').textContent='WAVE '+WAVE;
-    const ib=WAVE>0&&WAVE%5===0;
+    document.getElementById('wnum').textContent=(HELL_MODE?'🔥 ':'')+'WAVE '+WAVE;document.getElementById('wnum').style.color=HELL_MODE?'#ff4040':'#fff';
+    const ib=WAVE>0&&(HELL_MODE?WAVE%3===0:WAVE%5===0);
     document.getElementById('wtype').textContent=ib?'BOSS WAVE':'일반 웨이브';
     document.getElementById('wtype').style.color=ib?'#c030c0':'#888';
     document.getElementById('wcd').textContent=BETWEEN?('다음: '+Math.ceil(BTTIMER/60)+'s'):('남은 적: '+alive);
