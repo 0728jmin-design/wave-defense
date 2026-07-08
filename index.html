@@ -20,8 +20,9 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>Wave Defense RPG</title>
 <!-- fix-craft-lowtier-cost-v1 -->
-<!-- melee-enemy-effect-v1 -->
+<!-- melee-manual-click-v1 -->
 <!-- hell-ranking-split-boss-cycle-v1 -->
+<!-- melee-gold-event-v1 -->
 <!-- sidebar-leaderboard-v1 -->
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -98,7 +99,7 @@ canvas{display:block;touch-action:none}
         <div>🗡 아이템 강화(V) · 합성(C) · 상점(O)</div>
         <div>👹 5웨이브마다 보스 등장</div>
         <div>🏆 최대한 많은 웨이브를 버텨라!</div>
-        <div>⚔ 근접무기 추가: 전방 베기 모션 · 범위 타격</div>
+        <div>⚔ 근접무기: 클릭/탭으로 수동 베기 · 강화된 범위 타격</div>
       </div>
     </div>
     <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
@@ -110,6 +111,7 @@ canvas{display:block;touch-action:none}
       </button>
     </div>
     <div style="margin-top:10px;font-size:11px;color:#ff6060">지옥 모드: 적 강화 · 빠른 성장 · 보스 추가탄막 · 극한 난이도</div>
+    <div style="margin-top:6px;font-size:11px;color:#ffc828">⚔ 근접 이벤트: 7/15(수) 23:59까지 근접 처치 골드 2배</div>
     
   </div>
 </div>
@@ -147,10 +149,14 @@ canvas{display:block;touch-action:none}
       <div class="hr">E: 치유  R: 분신술</div>
       <div class="hr">I: 인벤  O: 상점  C: 합성  V: 강화</div>
       <div class="hr">S: 스탯분배</div>
+      <div class="hr" style="color:#ffc828">마우스/화면 탭: 근접무기 베기</div>
       <div class="st" style="margin-top:6px">현재 랭킹</div>
       <div id="sideRankMode" style="font-size:11px;font-weight:bold;color:#4af0b0;text-align:center;margin:4px 0">⚔ 일반 모드 TOP 5</div>
       <div id="sideRankList" style="font-size:10px;color:#aaa;background:#1a1830;border:1px solid #333;border-radius:6px;padding:6px;min-height:88px;text-align:center">불러오는 중...</div>
       <button class="ob" onclick="loadSideLeaderboard()" style="font-size:10px;padding:5px 7px;margin-top:5px;text-align:center;border-color:#444;color:#aaa">랭킹 새로고침</button>
+      <div id="meleeEventBox" style="font-size:10px;color:#ffc828;background:#20180a;border:1px solid #5a3b00;border-radius:6px;padding:6px;margin-top:6px;line-height:1.45;text-align:center">
+        ⚔ 근접 이벤트<br>근접 처치 골드 2배<br><span style="color:#aaa">~ 7/15(수) 23:59</span>
+      </div>
       <div class="hr" style="color:#666;text-align:center">게임오버 시 현재 모드 기록 등록</div>
     </div>
   </div>
@@ -280,10 +286,10 @@ const ITEMS = {
   '분노의 단검': {slot:'weapon',atk:15, rage:true, rarity:'희귀'},
   '패왕의 검':   {slot:'weapon',atk:22, rage:true, rarity:'전설'},
   // 근접 무기: 투사체 대신 전방 범위 베기 모션으로 공격
-  '훈련용 장검': {slot:'weapon',atk:9,  melee:true,range:72,arc:1.55,rarity:'일반'},
-  '기사 대검':   {slot:'weapon',atk:20, melee:true,range:84,arc:1.65,rarity:'희귀'},
-  '피의 낫':     {slot:'weapon',atk:26, melee:true,range:96,arc:1.85,lifesteal:0.04,rarity:'전설'},
-  '번개 카타나': {slot:'weapon',atk:24, melee:true,range:92,arc:1.45,atkspd:2,rarity:'전설'},
+  '훈련용 장검': {slot:'weapon',atk:13, melee:true,range:82, arc:1.60,rarity:'일반'},
+  '기사 대검':   {slot:'weapon',atk:28, melee:true,range:98, arc:1.72,rarity:'희귀'},
+  '피의 낫':     {slot:'weapon',atk:38, melee:true,range:112,arc:1.92,lifesteal:0.06,rarity:'전설'},
+  '번개 카타나': {slot:'weapon',atk:34, melee:true,range:106,arc:1.52,atkspd:3,rarity:'전설'},
 };
 const INAMES = Object.keys(ITEMS);
 const RC = {'일반':'#aaa','희귀':'#4af0f0','전설':'#ffc828','합성':'#ff80ff','초월':'#ff3030','신성':'#e8d0ff','고대':'#ff8c00'};
@@ -301,6 +307,27 @@ const SKNAMES = Object.keys(SKILL_DEF);
 const SHIELD_BOSS_REGEN_RATE = 0.01;
 const SHIELD_BOSS_REGEN_INTERVAL = 1000;
 const SHIELD_BOSS_BREAK_DELAY = 3000;
+
+// ── 기간 이벤트: 근접 처치 골드 2배 ─────────────────────
+// 2026-07-15 23:59:59 KST까지 근접 무기로 적을 처치하면 골드 보상이 2배가 된다.
+const MELEE_GOLD_EVENT_END = new Date('2026-07-15T23:59:59+09:00').getTime();
+function isMeleeGoldEventActive(){return Date.now()<=MELEE_GOLD_EVENT_END;}
+function meleeGoldEventLabel(){return '7/15(수) 23:59';}
+function updateMeleeEventBox(){
+  const el=document.getElementById('meleeEventBox');
+  if(!el)return;
+  if(isMeleeGoldEventActive()){
+    el.style.display='block';
+    el.style.borderColor='#5a3b00';
+    el.style.color='#ffc828';
+    el.innerHTML='⚔ 근접 이벤트<br>근접 처치 골드 2배<br><span style="color:#aaa">~ '+meleeGoldEventLabel()+'</span>';
+  }else{
+    el.style.display='block';
+    el.style.borderColor='#333';
+    el.style.color='#666';
+    el.innerHTML='⚔ 근접 이벤트 종료<br><span style="color:#777">근접 골드 보너스 없음</span>';
+  }
+}
 
 // ── 후반 난이도 밸런스 설정 ───────────────────────────
 // 후반으로 갈수록 플레이어 성장보다 적 성장이 더 약해지는 문제를 보정
@@ -381,20 +408,19 @@ function spawnSlash(x,y,ang,range,arc,col,dmg){
   const ex=x+Math.cos(ang)*range,ey=y+Math.sin(ang)*range;
   spawnP(ex,ey,col,8,20,4);
 }
-function meleeAttack(tgt,dmg,col,crit,raging){
+function meleeAttackAngle(ang,dmg,col,crit,raging){
   const wd=P.eq.weapon?iData(P.eq.weapon):null;
-  const range=(wd&&wd.range)||78;
-  const arc=(wd&&wd.arc)||1.55;
-  const ang=Math.atan2(tgt.y-P.y,tgt.x-P.x);
+  const range=(wd&&wd.range)||82;
+  const arc=(wd&&wd.arc)||1.60;
   let hits=0;
   const tgts=allE();
   for(const e of tgts){
     const dist=Math.hypot(e.x-P.x,e.y-P.y);
     if(dist>P.r+range+e.r)continue;
     const ea=Math.atan2(e.y-P.y,e.x-P.x);
-    if(Math.abs(normAng(ea-ang))<=arc*0.5 || dist<P.r+34){
+    if(Math.abs(normAng(ea-ang))<=arc*0.5 || dist<P.r+36){
       const finalDmg=hits===0?dmg:Math.floor(dmg*0.72);
-      if(hitE(e,finalDmg)){handleKill(e);}
+      if(hitE(e,finalDmg)){handleKill(e,'melee');}
       hits++;
       spawnP(e.x,e.y,col,6,18,4);
     }
@@ -406,6 +432,11 @@ function meleeAttack(tgt,dmg,col,crit,raging){
     P.hp=Math.min(P.maxHp,P.hp+heal);
     popup(P.x,P.y-44,'흡혈 +'+heal,'#cc2020');
   }
+  return hits;
+}
+function meleeAttack(tgt,dmg,col,crit,raging){
+  const ang=Math.atan2(tgt.y-P.y,tgt.x-P.x);
+  return meleeAttackAngle(ang,dmg,col,crit,raging);
 }
 let DROPS=[];
 function spawnDrop(x,y,forceLeg){
@@ -487,9 +518,17 @@ const P={
     const d=this.itemData(raw);
     if(!d) return;
     const slot=d.slot;
+
+    // 인벤토리에서 장착할 아이템 1개만 제거한다.
+    // 기존 filter(n=>n!==raw)는 같은 이름의 일반 아이템(예: 낡은 단검)이 여러 개 있을 때
+    // 같은 값이 전부 삭제되는 문제가 있었다.
+    const invIdx=this.inv.indexOf(raw);
+    if(invIdx>=0) this.inv.splice(invIdx,1);
+
+    // 기존 장착 장비는 인벤토리로 되돌린다.
     if(this.eq[slot]) this.inv.push(this.eq[slot]);
     this.eq[slot]=raw;
-    this.inv=this.inv.filter(n=>n!==raw);
+
     const oh=this.maxHp,om=this.maxMp;
     this.recalc();
     this.hp=Math.min(this.maxHp,this.hp+Math.max(0,this.maxHp-oh));
@@ -1172,11 +1211,14 @@ function waveTick(dt){
   const alive=ENEMIES.filter(e=>e.alive).length+(BOSS&&BOSS.alive?1:0);
   if(QUEUE.length===0&&alive===0){BETWEEN=true;BTTIMER=180;spawnP(CW/2,CH/2,'#ffc828',25,55,7);}
 }
-function handleKill(e){
+function handleKill(e,source){
   if(e._kh)return;e._kh=true;
   const xpMult=1+Math.floor(WAVE/3)*0.5;
-  P.gainXp(Math.floor(e.xp*xpMult));P.gold+=e.gold;P.kills++;
+  const meleeBonus=source==='melee'&&isMeleeGoldEventActive()&&e.gold>0;
+  const goldGain=meleeBonus?e.gold*2:e.gold;
+  P.gainXp(Math.floor(e.xp*xpMult));P.gold+=goldGain;P.kills++;
   spawnP(e.x,e.y,'#ffc828',12,30,5);
+  if(meleeBonus){popup(e.x,e.y-24,'근접 이벤트 +'+goldGain+'G','#ffc828');spawnP(e.x,e.y,'#ffc828',8,24,4);}
   // 분열체 분열
   if(e.type==='splitter'&&e.split){
     e.split=false;
@@ -1231,7 +1273,7 @@ function iName(raw){
   return String(raw);
 }
 function iCol(raw){const d=iData(raw);if(!d)return'#4af0f0';if(d.rarity==='고대')return'#ff8c00';if(d.rarity==='초월')return'#ff3030';if(d.rarity==='신성')return'#e8d0ff';return RC[d.rarity||'희귀']||'#4af0f0';}
-function iStats(raw){const d=iData(raw);if(!d)return'';const st=[];if(d.atk)st.push('ATK+'+d.atk);if(d.def)st.push('DEF+'+d.def);if(d.hp)st.push('HP+'+d.hp);if(d.spd)st.push('SPD+'+Math.round(d.spd*10)/10);if(d.mp)st.push('MP+'+d.mp);if(d.atkspd)st.push('공속+'+d.atkspd);if(d.crit)st.push('치명+'+d.crit+'%');if(d.melee)st.push('근접 범위 '+(d.range||78));if(d.lifesteal)st.push('흡혈 '+Math.round(d.lifesteal*100)+'%');if(d.rage)st.push('HP50%이하 ATK*2');return st.join(' ');}
+function iStats(raw){const d=iData(raw);if(!d)return'';const st=[];if(d.atk)st.push('ATK+'+d.atk);if(d.def)st.push('DEF+'+d.def);if(d.hp)st.push('HP+'+d.hp);if(d.spd)st.push('SPD+'+Math.round(d.spd*10)/10);if(d.mp)st.push('MP+'+d.mp);if(d.atkspd)st.push('공속+'+d.atkspd);if(d.crit)st.push('치명+'+d.crit+'%');if(d.melee)st.push('수동 근접 범위 '+(d.range||82));if(d.lifesteal)st.push('흡혈 '+Math.round(d.lifesteal*100)+'%');if(d.rage)st.push('HP50%이하 ATK*2');return st.join(' ');}
 function sellPrice(raw){const d=iData(raw);if(!d)return 5;const base=d.rarity==='고대'?1200:d.rarity==='초월'?600:d.rarity==='신성'?450:d.rarity==='전설'?180:d.rarity==='희귀'?70:d.rarity==='합성'?300:25;return Math.floor(base*0.5);}
 
 // ── 상점 ───────────────────────────────────────────────
@@ -2049,7 +2091,7 @@ async function loadSideLeaderboard(){
     box.innerHTML='<span style="color:#f04040">불러오기 실패<br>'+escHtml(reason).slice(0,80)+'</span>';
   }
 }
-setTimeout(loadSideLeaderboard,700);
+setTimeout(function(){loadSideLeaderboard();updateMeleeEventBox();},700);
 
 function showGO(){
   GAMEOVER=true;OV_OPEN=true;LAST_SCORE=calcScore();
@@ -2086,6 +2128,53 @@ window.addEventListener('keyup',function(e){
   KEYS[e.key.toLowerCase()]=false;
 });
 function touchSk(name,e){e.preventDefault();if(!OV_OPEN&&!GAMEOVER)P.useSkill(name);}
+function buildPlayerAttackPayload(){
+  const cr=P.critRate||5;
+  const overCrit=Math.max(0,cr-100);
+  const critChance=Math.min(cr,100);
+  const crit=Math.random()*100<critChance;
+  const critMult=crit?(2.0+overCrit*0.02):1.0;
+  const rageWep=P.eq.weapon&&iData(P.eq.weapon)&&iData(P.eq.weapon).rage;
+  const raging=rageWep&&P.hp<=P.maxHp*0.5;
+  const dmg=Math.floor(P.atk*(raging?2:1)*critMult);
+  const col=raging&&crit?'#ff0000':raging?'#ff4040':crit?'#ff8c00':'#ffc828';
+  const sz=raging?9:crit?8:5;
+  return {cr,overCrit,critChance,crit,critMult,raging,dmg,col,sz};
+}
+function showAttackPopup(info,isMelee){
+  if(isMelee){
+    if(info.crit&&info.raging) popup(P.x,P.y-50,'분노베기 x'+info.critMult.toFixed(1),'#ff0000');
+    else if(info.raging) popup(P.x,P.y-40,'분노베기!','#ff4040');
+    else if(info.crit) popup(P.x,P.y-40,'CRIT 베기 x'+info.critMult.toFixed(1),'#ff8c00');
+  }else{
+    if(info.crit&&info.raging) popup(P.x,P.y-50,'분노CRIT x'+info.critMult.toFixed(1),'#ff0000');
+    else if(info.raging) popup(P.x,P.y-40,'분노!','#ff4040');
+    else if(info.crit) popup(P.x,P.y-40,'CRIT x'+info.critMult.toFixed(1),'#ff8c00');
+  }
+}
+function canvasPointFromEvent(e){
+  const r=canvas.getBoundingClientRect();
+  return {x:(e.clientX-r.left)*(CW/r.width),y:(e.clientY-r.top)*(CH/r.height)};
+}
+function manualMeleeAttackAt(x,y){
+  if(!GAME_STARTED||GAMEOVER||OV_OPEN)return false;
+  const wd=P.eq.weapon?iData(P.eq.weapon):null;
+  if(!wd||!wd.melee)return false;
+  if(P.atkT>0)return true;
+  const info=buildPlayerAttackPayload();
+  const ang=Math.atan2(y-P.y,x-P.x);
+  meleeAttackAngle(ang,info.dmg,info.col,info.crit,info.raging);
+  showAttackPopup(info,true);
+  const aspMs=P.asp*(1000/60);
+  const zapMult=P.zapTimer>0?2.5:1.0;
+  P.atkT=Math.max(150,P.berT>0?Math.floor(aspMs*0.76*zapMult):Math.floor(aspMs*1.06*zapMult));
+  return true;
+}
+canvas.addEventListener('pointerdown',function(e){
+  if(e.button!==undefined&&e.button!==0)return;
+  const pt=canvasPointFromEvent(e);
+  if(manualMeleeAttackAt(pt.x,pt.y))e.preventDefault();
+},{passive:false});
 
 // ── 조이스틱 ───────────────────────────────────────────
 const jBase=document.getElementById('joy-base');
@@ -2119,6 +2208,7 @@ function jUpd(cx,cy){
 
 // ── HUD ────────────────────────────────────────────────
 function updateHUD(){
+  updateMeleeEventBox();
   const alive=ENEMIES.filter(function(e){return e.alive;}).length+(BOSS&&BOSS.alive?1:0);
   if(IS_MOB){
     document.getElementById('m-hpl').textContent='HP '+Math.ceil(P.hp)+'/'+P.maxHp;
@@ -2230,45 +2320,24 @@ function loop(ts){
   P.y=Math.max(P.r+2,Math.min(CH-P.r-2,P.y+my*P.spd*dt));
 
   // 자동 공격
+  // 근접무기는 자동 공격하지 않고, 캔버스 클릭/탭 방향으로 직접 베기만 나간다.
   P.atkT-=raw;
   if(P.atkT<=0){
-    const tgt=nearest();
-    if(tgt){
-      const cr=P.critRate||5;
-      // 치명타 100% 초과 → 초과분이 데미지 배율로 전환
-      // 예: 치명타 150% = 확정크리 + 데미지 x1.5 추가
-      const overCrit=Math.max(0,cr-100);
-      const critChance=Math.min(cr,100);
-      const crit=Math.random()*100<critChance;
-      const critMult=crit?(2.0+overCrit*0.02):1.0;
-      const rageWep=P.eq.weapon&&iData(P.eq.weapon)&&iData(P.eq.weapon).rage;
-      const raging=rageWep&&P.hp<=P.maxHp*0.5;
-      const dmg=Math.floor(P.atk*(raging?2:1)*critMult);
-      const col=raging&&crit?'#ff0000':raging?'#ff4040':crit?'#ff8c00':'#ffc828';
-      const sz=raging?9:crit?8:5;
-      const wd=P.eq.weapon?iData(P.eq.weapon):null;
-      const aspMs=P.asp*(1000/60);
-      const zapMult=P.zapTimer>0?2.5:1.0;
-      if(wd&&wd.melee){
-        const range=wd.range||78;
-        if(Math.hypot(tgt.x-P.x,tgt.y-P.y)<=P.r+range+tgt.r){
-          meleeAttack(tgt,dmg,col,crit,raging);
-          if(crit&&raging) popup(P.x,P.y-50,'분노베기 x'+critMult.toFixed(1),'#ff0000');
-          else if(raging)  popup(P.x,P.y-40,'분노베기!','#ff4040');
-          else if(crit)    popup(P.x,P.y-40,'CRIT 베기 x'+critMult.toFixed(1),'#ff8c00');
-          P.atkT=Math.max(135,P.berT>0?Math.floor(aspMs*0.78*zapMult):Math.floor(aspMs*1.12*zapMult));
-        } else {
-          P.atkT=70;
-        }
-      } else {
-        spawnBul(P.x,P.y,tgt.x,tgt.y,dmg,col,sz,10,'player',false);
-        if(crit&&raging) popup(P.x,P.y-50,'분노CRIT x'+critMult.toFixed(1),'#ff0000');
-        else if(raging)  popup(P.x,P.y-40,'분노!','#ff4040');
-        else if(crit)    popup(P.x,P.y-40,'CRIT x'+critMult.toFixed(1),'#ff8c00');
+    const wd=P.eq.weapon?iData(P.eq.weapon):null;
+    if(wd&&wd.melee){
+      P.atkT=0; // 클릭/탭 대기
+    }else{
+      const tgt=nearest();
+      if(tgt){
+        const info=buildPlayerAttackPayload();
+        const aspMs=P.asp*(1000/60);
+        const zapMult=P.zapTimer>0?2.5:1.0;
+        spawnBul(P.x,P.y,tgt.x,tgt.y,info.dmg,info.col,info.sz,10,'player',false);
+        showAttackPopup(info,false);
         P.atkT=Math.max(80,P.berT>0?Math.floor(aspMs*0.65*zapMult):aspMs*zapMult);
       }
+      else P.atkT=10;
     }
-    else P.atkT=10;
   }
   for(const k of SKNAMES){if(P.sk[k].cd>0)P.sk[k].cd=Math.max(0,P.sk[k].cd-raw);}
   if(P.zapTimer>0)P.zapTimer=Math.max(0,P.zapTimer-raw);
