@@ -1,6 +1,29 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
+<!-- casual-source-hide-v1 -->
+<script>
+(function(){
+  function blockDevKeys(e){
+    const k=(e.key||'').toLowerCase();
+    const blocked =
+      e.key === 'F12' ||
+      (e.ctrlKey && e.shiftKey && ['i','j','c'].includes(k)) ||
+      (e.ctrlKey && ['u','s'].includes(k));
+    if(blocked){
+      e.preventDefault();
+      e.stopPropagation();
+      return false;
+    }
+  }
+  document.addEventListener('keydown', blockDevKeys, true);
+  document.addEventListener('contextmenu', function(e){
+    e.preventDefault();
+    return false;
+  }, true);
+})();
+</script>
+
 <meta charset="UTF-8">
 <meta name="theme-color" content="#0a0814">
 <meta name="mobile-web-app-capable" content="yes">
@@ -21,6 +44,7 @@
 <title>Wave Defense RPG</title>
 <!-- fix-craft-lowtier-cost-v1 -->
 <!-- melee-manual-click-v1 -->
+<!-- mobile-melee-fix-v1 -->
 <!-- hell-ranking-split-boss-cycle-v1 -->
 <!-- melee-gold-event-v1 -->
 <!-- sidebar-leaderboard-v1 -->
@@ -43,10 +67,15 @@ canvas{display:block;touch-action:none}
 #mob-stat-row{display:flex;justify-content:space-between;font-size:11px;flex-wrap:wrap;gap:2px 8px}
 #mob-equip-row{font-size:10px;color:#888;margin-top:2px}
 #mob-ctrl{display:none;position:fixed;bottom:0;left:0;right:0;height:180px;z-index:20;pointer-events:none}
-#joy-zone{position:absolute;bottom:12px;left:12px;width:140px;height:140px;pointer-events:all}
-#joy-base{width:130px;height:130px;border-radius:50%;background:rgba(255,255,255,.07);border:2px solid rgba(255,255,255,.18)}
-#joy-knob{width:52px;height:52px;border-radius:50%;background:rgba(80,200,255,.45);border:2px solid rgba(80,200,255,.8);position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)}
+#joy-zone{position:fixed;left:0;top:0;width:140px;height:140px;display:none;pointer-events:none;z-index:18;transform:translate(-50%,-50%)}
+#joy-base{width:130px;height:130px;border-radius:50%;background:rgba(255,255,255,.08);border:2px solid rgba(255,255,255,.22);box-shadow:0 0 18px rgba(80,200,255,.18)}
+#joy-knob{width:52px;height:52px;border-radius:50%;background:rgba(80,200,255,.50);border:2px solid rgba(80,200,255,.9);position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);box-shadow:0 0 12px rgba(80,200,255,.35)}
 #skill-area{position:absolute;bottom:12px;right:10px;display:grid;grid-template-columns:1fr 1fr;gap:6px;pointer-events:all}
+#melee-atk-btn{position:absolute;bottom:86px;right:158px;width:72px;height:72px;border-color:#ffc828;background:rgba(40,25,8,.92);box-shadow:0 0 18px rgba(255,200,40,.25);pointer-events:all;display:none}
+#melee-atk-btn.rdy{border-color:#4af0b0;box-shadow:0 0 22px rgba(74,240,176,.35)}
+#melee-atk-btn .skt{color:#ffc828;font-size:14px}
+#melee-atk-btn .skmp{color:#ddd;font-size:9px}
+
 .skbtn{width:68px;height:68px;border-radius:50%;border:2px solid #555;background:rgba(15,13,35,.88);color:#fff;font-size:11px;font-weight:bold;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:inherit;position:relative;overflow:hidden}
 .skbtn.rdy{border-width:2.5px}
 .skt{font-size:12px;font-weight:bold;line-height:1.2}
@@ -192,6 +221,7 @@ canvas{display:block;touch-action:none}
     <button class="skbtn" id="sb2" ontouchstart="touchSk('치유의 빛',event)" style="border-color:#3dc850"><span class="skt" style="color:#3dc850">치유</span><span class="skmp">MP 40</span><div class="skcd-bar"><div class="skcd-fill" id="sc2" style="background:#3dc850;width:100%"></div></div></button>
     <button class="skbtn" id="sb3" ontouchstart="touchSk('분신술',event)" style="border-color:#b060ff"><span class="skt" style="color:#b060ff">분신술</span><span class="skmp">MP 50</span><div class="skcd-bar"><div class="skcd-fill" id="sc3" style="background:#b060ff;width:100%"></div></div></button>
   </div>
+  <button class="skbtn" id="melee-atk-btn" ontouchstart="touchMeleeAttack(event)" onclick="clickMeleeAttack(event)"><span class="skt">베기</span><span class="skmp">근접무기</span></button>
 </div>
 <script>
 function resetGameState(){
@@ -2152,17 +2182,17 @@ function showAttackPopup(info,isMelee){
     else if(info.crit) popup(P.x,P.y-40,'CRIT x'+info.critMult.toFixed(1),'#ff8c00');
   }
 }
-function canvasPointFromEvent(e){
+function canvasPointFromClient(clientX,clientY){
   const r=canvas.getBoundingClientRect();
-  return {x:(e.clientX-r.left)*(CW/r.width),y:(e.clientY-r.top)*(CH/r.height)};
+  return {x:(clientX-r.left)*(CW/r.width),y:(clientY-r.top)*(CH/r.height)};
 }
-function manualMeleeAttackAt(x,y){
+function canvasPointFromEvent(e){return canvasPointFromClient(e.clientX,e.clientY);}
+function manualMeleeAttackDir(ang){
   if(!GAME_STARTED||GAMEOVER||OV_OPEN)return false;
   const wd=P.eq.weapon?iData(P.eq.weapon):null;
   if(!wd||!wd.melee)return false;
   if(P.atkT>0)return true;
   const info=buildPlayerAttackPayload();
-  const ang=Math.atan2(y-P.y,x-P.x);
   meleeAttackAngle(ang,info.dmg,info.col,info.crit,info.raging);
   showAttackPopup(info,true);
   const aspMs=P.asp*(1000/60);
@@ -2170,34 +2200,91 @@ function manualMeleeAttackAt(x,y){
   P.atkT=Math.max(150,P.berT>0?Math.floor(aspMs*0.76*zapMult):Math.floor(aspMs*1.06*zapMult));
   return true;
 }
+function manualMeleeAttackAt(x,y){return manualMeleeAttackDir(Math.atan2(y-P.y,x-P.x));}
+function meleeButtonAngle(){
+  const tgt=nearest();
+  if(tgt)return Math.atan2(tgt.y-P.y,tgt.x-P.x);
+  if(typeof JOY!=='undefined'&&Math.hypot(JOY.dx||0,JOY.dy||0)>0.18)return Math.atan2(JOY.dy,JOY.dx);
+  return 0;
+}
+function touchMeleeAttack(e){
+  if(e){e.preventDefault();e.stopPropagation();}
+  const wd=P.eq.weapon?iData(P.eq.weapon):null;
+  if(!wd||!wd.melee){popup(P.x,P.y-48,'근접무기 필요','#aaa');return false;}
+  return manualMeleeAttackDir(meleeButtonAngle());
+}
+function clickMeleeAttack(e){
+  if(e){e.preventDefault();e.stopPropagation();}
+  return touchMeleeAttack(null);
+}
 canvas.addEventListener('pointerdown',function(e){
   if(e.button!==undefined&&e.button!==0)return;
   const pt=canvasPointFromEvent(e);
-  if(manualMeleeAttackAt(pt.x,pt.y))e.preventDefault();
+  if(manualMeleeAttackAt(pt.x,pt.y)){e.preventDefault();e.stopPropagation();}
+},{passive:false});
+canvas.addEventListener('touchstart',function(e){
+  if(!e.changedTouches||!e.changedTouches.length)return;
+  const t=e.changedTouches[0];
+  const pt=canvasPointFromClient(t.clientX,t.clientY);
+  if(manualMeleeAttackAt(pt.x,pt.y)){e.preventDefault();e.stopPropagation();}
 },{passive:false});
 
-// ── 조이스틱 ───────────────────────────────────────────
+// ── 플로팅 조이스틱 ───────────────────────────────────
+const jZone=document.getElementById('joy-zone');
 const jBase=document.getElementById('joy-base');
 const jKnob=document.getElementById('joy-knob');
-let JOY={id:-1,bx:0,by:0,dx:0,dy:0};
-const JR=48;
-document.getElementById('joy-zone').addEventListener('touchstart',function(e){
-  if(OV_OPEN||GAMEOVER)return;
-  const t=e.changedTouches[0];
-  JOY.id=t.identifier;
-  // 터치한 위치를 조이스틱 중심으로
-  JOY.bx=t.clientX;JOY.by=t.clientY;
+let JOY={id:-1,bx:0,by:0,dx:0,dy:0,active:false};
+const JR=52;
+function isControlTouchTarget(el){
+  return !!(el&&el.closest&&el.closest('#skill-area,#mob-top,#melee-atk-btn,#ov,.topbtn,.skbtn,button,input,select,textarea'));
+}
+function canStartFloatingJoy(t,target){
+  if(!IS_MOB||OV_OPEN||GAMEOVER||!GAME_STARTED)return false;
+  if(isControlTouchTarget(target))return false;
+  // 오른쪽은 스킬/베기 버튼 영역으로 남겨두고, 왼쪽/중앙을 이동 영역으로 사용
+  const moveLimit=window.innerWidth*0.62;
+  const hud=document.getElementById('mob-hud');
+  const hudH=hud&&hud.style.display!=='none'?hud.getBoundingClientRect().height:0;
+  return t.clientX<=moveLimit&&t.clientY>hudH+4;
+}
+function showFloatingJoy(x,y){
+  JOY.bx=x;JOY.by=y;JOY.dx=0;JOY.dy=0;JOY.active=true;
+  jZone.style.display='block';
+  jZone.style.left=x+'px';
+  jZone.style.top=y+'px';
   jKnob.style.transform='translate(-50%,-50%)';
-  jUpd(t.clientX,t.clientY);e.preventDefault();
-},{passive:false});
-document.getElementById('joy-zone').addEventListener('touchmove',function(e){
-  for(let i=0;i<e.changedTouches.length;i++){const t=e.changedTouches[i];if(t.identifier===JOY.id)jUpd(t.clientX,t.clientY);}
+}
+function hideFloatingJoy(){
+  JOY.id=-1;JOY.dx=0;JOY.dy=0;JOY.active=false;
+  jKnob.style.transform='translate(-50%,-50%)';
+  jZone.style.display='none';
+}
+document.addEventListener('touchstart',function(e){
+  if(!e.changedTouches||!e.changedTouches.length||JOY.id!==-1)return;
+  const t=e.changedTouches[0];
+  if(!canStartFloatingJoy(t,e.target))return;
+  JOY.id=t.identifier;
+  showFloatingJoy(t.clientX,t.clientY);
+  jUpd(t.clientX,t.clientY);
   e.preventDefault();
-},{passive:false});
-document.getElementById('joy-zone').addEventListener('touchend',function(e){
-  for(let i=0;i<e.changedTouches.length;i++){const t=e.changedTouches[i];if(t.identifier===JOY.id){JOY.dx=0;JOY.dy=0;jKnob.style.transform='translate(-50%,-50%)';}}
-  e.preventDefault();
-},{passive:false});
+  e.stopPropagation();
+},{passive:false,capture:true});
+document.addEventListener('touchmove',function(e){
+  if(JOY.id===-1)return;
+  for(let i=0;i<e.changedTouches.length;i++){
+    const t=e.changedTouches[i];
+    if(t.identifier===JOY.id){jUpd(t.clientX,t.clientY);e.preventDefault();e.stopPropagation();return;}
+  }
+},{passive:false,capture:true});
+function endFloatingJoyFromEvent(e){
+  if(JOY.id===-1)return;
+  for(let i=0;i<e.changedTouches.length;i++){
+    const t=e.changedTouches[i];
+    if(t.identifier===JOY.id){hideFloatingJoy();e.preventDefault();e.stopPropagation();return;}
+  }
+}
+document.addEventListener('touchend',endFloatingJoyFromEvent,{passive:false,capture:true});
+document.addEventListener('touchcancel',endFloatingJoyFromEvent,{passive:false,capture:true});
 function jUpd(cx,cy){
   let dx=cx-JOY.bx,dy=cy-JOY.by;
   const d=Math.hypot(dx,dy);
@@ -2209,6 +2296,13 @@ function jUpd(cx,cy){
 // ── HUD ────────────────────────────────────────────────
 function updateHUD(){
   updateMeleeEventBox();
+  const meleeBtn=document.getElementById('melee-atk-btn');
+  if(meleeBtn){
+    const wd=P.eq.weapon?iData(P.eq.weapon):null;
+    const show=!!(IS_MOB&&GAME_STARTED&&!GAMEOVER&&wd&&wd.melee);
+    meleeBtn.style.display=show?'flex':'none';
+    if(show&&P.atkT<=0)meleeBtn.classList.add('rdy');else meleeBtn.classList.remove('rdy');
+  }
   const alive=ENEMIES.filter(function(e){return e.alive;}).length+(BOSS&&BOSS.alive?1:0);
   if(IS_MOB){
     document.getElementById('m-hpl').textContent='HP '+Math.ceil(P.hp)+'/'+P.maxHp;
