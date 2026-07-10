@@ -42,7 +42,7 @@
 }">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>Wave Defense RPG</title>
-<!-- fix-craft-lowtier-cost-v1 -->
+<!-- craft-low-tier-efficiency-v1 -->
 <!-- melee-manual-click-v1 -->
 <!-- mobile-melee-fix-v1 -->
 <!-- hell-ranking-split-boss-cycle-v1 -->
@@ -178,7 +178,7 @@ canvas{display:block;touch-action:none}
       <div class="hr">E: 치유  R: 분신술</div>
       <div class="hr">I: 인벤  O: 상점  C: 합성  V: 강화</div>
       <div class="hr">S: 스탯분배</div>
-      <div class="hr" style="color:#ffc828">스페이스바/마우스: 근접무기 베기</div>
+      <div class="hr" style="color:#ffc828">마우스/화면 탭: 근접무기 베기</div>
       <div class="st" style="margin-top:6px">현재 랭킹</div>
       <div id="sideRankMode" style="font-size:11px;font-weight:bold;color:#4af0b0;text-align:center;margin:4px 0">⚔ 일반 모드 TOP 5</div>
       <div id="sideRankList" style="font-size:10px;color:#aaa;background:#1a1830;border:1px solid #333;border-radius:6px;padding:6px;min-height:88px;text-align:center">불러오는 중...</div>
@@ -1509,32 +1509,39 @@ function craftPreview(a,b){
   if(fallbackAbsorb){
     const high=rankScore(a.rarity)>=rankScore(b.rarity)?a:b;
     const low=high===a?b:a;
+    const lowOrigin=originScore(low);
+    // 표 밖 조합은 비용으로 막지 않고, 낮은 재료 흡수 효율 자체를 낮춘다.
+    // 일반/희귀 같은 낮은 재료는 고등급 장비에 붙여도 아주 조금만 성장한다.
+    let absorb=0.12;
+    if(lowOrigin>=2)absorb=0.18;
+    if(lowOrigin>=3)absorb=0.22;
+    if(lowOrigin<=0)absorb=0.08;
     for(const key of keys){
       const hv=high[key]||0;
       const lv=low[key]||0;
       if(hv>0||lv>0){
-        // 표 밖 조합은 고등급 장비 자체에 배율을 다시 곱하지 않는다.
-        // 낮은 재료 스탯의 20%만 흡수해서 반복 합성 이득을 제한한다.
-        const add=key==='spd'?Math.round(lv*0.20*10)/10:Math.ceil(lv*0.20);
+        const add=key==='spd'?Math.round(lv*absorb*10)/10:Math.ceil(lv*absorb);
         merged[key]=key==='spd'?Math.round((hv+add)*10)/10:hv+add;
       }
     }
   } else {
     const outScore=rankScore(newR);
-    const lowBaseGap=Math.max(0,outScore-avgOrigin-1);
-    const lowBasePenalty=Math.max(0.50,1-lowBaseGap*0.18);
+    const depth=merged.craftDepth||0;
+    const originGap=Math.max(0,outScore-avgOrigin-1);
+    const lowSourceDepthPenalty=(avgOrigin<1.5&&outScore>=2)?Math.min(0.42,Math.max(0,depth-1)*0.045):0;
+    const lowBasePenalty=Math.max(0.25,1-originGap*0.34-lowSourceDepthPenalty);
     for(const key of keys){
       const v=(a[key]||0)+(b[key]||0);
       if(v>0){
-        // 기존은 모든 등급 상승에서 스탯 합계에 1.1~1.5배가 반복 적용되어
-        // 낡은 단검 루트가 말도 안 되는 효율을 냈다.
-        // 이제 기본 합성은 합계보다 살짝 낮거나 비슷하게 만들고,
-        // 신성/초월/고대 같은 상위 진화에서만 제한적으로 보너스를 준다.
-        let mult=0.85;
-        if(newR==='합성')mult=0.90;
-        if(newR==='신성')mult=0.95;
-        if(newR==='초월')mult=1.05;
-        if(newR==='고대')mult=1.12;
+        // 가격을 올려서 막는 대신, 낮은 등급 출신 재료가 고등급으로 올라갈수록 스탯 효율을 낮춘다.
+        // 자연 전설/희귀끼리 합성하면 정상 효율, 낡은 단검처럼 일반템 기반으로 계속 올리면 효율이 크게 감소한다.
+        let mult=0.78;
+        if(newR==='희귀')mult=avgOrigin<0.5?0.65:0.75;
+        if(newR==='전설')mult=avgOrigin<1?0.68:0.78;
+        if(newR==='합성')mult=0.85;
+        if(newR==='신성')mult=0.90;
+        if(newR==='초월')mult=1.00;
+        if(newR==='고대')mult=1.08;
         const finalMult=mult*lowBasePenalty;
         merged[key]=key==='spd'?Math.round(v*finalMult*10)/10:Math.max(1,Math.ceil(v*finalMult));
       }
@@ -1568,14 +1575,14 @@ function craftPowerForCost(d){
 function craftCost(a,b){
   const res=craftPreview(a,b);
   if(!res)return 0;
-  // 낡은 단검 같은 저가 일반템을 대량 구매해서 고효율 합성을 하는 것을 막기 위해
-  // 결과 등급 기본 비용 + 재료 전투력 + 합성 깊이 비용을 같이 반영한다.
-  const costByRarity={'희귀':220,'전설':650,'합성':1500,'신성':3200,'초월':5200,'고대':9000};
-  const rankCost={'일반':60,'희귀':140,'전설':320,'합성':700,'신성':1200,'초월':1800,'고대':2500};
+  // 합성 밸런스는 가격이 아니라 결과 효율로 조절한다.
+  // 비용은 플레이 흐름을 막지 않도록 낮게 유지한다.
+  const costByRarity={'희귀':45,'전설':110,'합성':260,'신성':560,'초월':900,'고대':1500};
+  const rankCost={'일반':8,'희귀':18,'전설':45,'합성':95,'신성':160,'초월':260,'고대':420};
   const depth=Math.max(a.craftDepth||0,b.craftDepth||0);
-  const powerCost=Math.floor((craftPowerForCost(a)+craftPowerForCost(b))*2.2);
-  const depthCost=depth*180;
-  return Math.max(80,Math.floor((costByRarity[res.rarity]||500)+(rankCost[a.rarity]||100)+(rankCost[b.rarity]||100)+powerCost+depthCost));
+  const powerCost=Math.floor((craftPowerForCost(a)+craftPowerForCost(b))*0.18);
+  const depthCost=depth*18;
+  return Math.max(30,Math.floor((costByRarity[res.rarity]||80)+(rankCost[a.rarity]||10)+(rankCost[b.rarity]||10)+powerCost+depthCost));
 }
 function allInvList(){
   const list=[];
@@ -2153,7 +2160,6 @@ window.addEventListener('keydown',function(e){
   else if(k==='v'){e.preventDefault();openEnhance();}
   else if(k==='o'){e.preventDefault();openShop();}
   else if(k==='s'&&P.sp>0){e.preventDefault();openStat();}
-  else if(e.key===' '){e.preventDefault();clickMeleeAttack(null);}
 });
 window.addEventListener('keyup',function(e){
   KEYS[e.key.toLowerCase()]=false;
